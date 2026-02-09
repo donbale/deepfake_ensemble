@@ -49,8 +49,8 @@ def main():
                         default='./models/fsfm/pretrain_ds_mean_std.txt',
                         help='Path to FSFM mean_std file')
     parser.add_argument('--dima806_model', type=str,
-                        default='dima806/deepfake_vs_real_image_detection',
-                        help='Dima806 model (HuggingFace repo ID)')
+                        default='buildborderless/CommunityForensics-DeepfakeDet-ViT',
+                        help='Second model (HuggingFace repo ID)')
     parser.add_argument('--vit_model', type=str,
                         default='jacoballessio/ai-image-detect-distilled',
                         help='ViT model name (HuggingFace) or local path')

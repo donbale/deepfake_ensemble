@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Dima806 Deepfake Detector - Alternative to CemRoot
-Model: dima806/deepfake_vs_real_image_detection
-Architecture: ViT-base-patch16-224 (fine-tuned on deepfake data)
+Second Deepfake Detector - Configurable ViT-based model
+Default: buildborderless/CommunityForensics-DeepfakeDet-ViT
 
-This is a highly-rated model on HuggingFace with 44 likes and used by 41 spaces.
+This model was trained on 2.7M samples from 4,800+ generators.
+Alternatives to try:
+- dima806/deepfake_vs_real_image_detection
+- yermandy/deepfake-detection
 """
 
 import torch
@@ -15,16 +17,16 @@ import os
 
 class Dima806Detector:
     """
-    ViT-based deepfake detector (dima806)
-    Fine-tuned on deepfake vs real image detection task.
+    ViT-based deepfake detector (configurable model)
+    Default: buildborderless/CommunityForensics-DeepfakeDet-ViT
     
     Detects 2 classes:
-    - fake: AI-generated/deepfake
-    - real: Authentic image
+    - fake/AI: AI-generated/deepfake
+    - real/human: Authentic image
     """
     
-    # HuggingFace model ID
-    HF_MODEL_ID = "dima806/deepfake_vs_real_image_detection"
+    # Default HuggingFace model ID (can be overridden)
+    HF_MODEL_ID = "buildborderless/CommunityForensics-DeepfakeDet-ViT"
     
     def __init__(self, model_name=None, cache_dir="./models/dima806", device='cuda'):
         """
