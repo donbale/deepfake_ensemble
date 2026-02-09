@@ -74,23 +74,31 @@ class CemRootDetector:
         Returns:
             Local path to the model file
         """
-        # If no path provided, use default cache location
+        # If no path provided, download from HuggingFace
         if model_path is None:
-            model_path = os.path.join(self.cache_dir, self.HF_FILENAME)
+            return self._download_from_huggingface(self.HF_REPO_ID)
         
-        # Check if it's a HuggingFace repo ID (contains '/')
-        if "/" in model_path and not os.path.exists(model_path):
-            # It's a HuggingFace repo ID
+        # Check if it looks like a local path (starts with . or / or \ or contains .h5)
+        is_local_path = (
+            model_path.startswith('./') or 
+            model_path.startswith('/') or 
+            model_path.startswith('\\') or
+            model_path.endswith('.h5') or
+            os.path.isabs(model_path)
+        )
+        
+        if is_local_path:
+            # It's a local path
+            if os.path.exists(model_path):
+                return model_path
+            else:
+                # Local file doesn't exist - download from HuggingFace
+                print(f"⚠️  Model not found at: {model_path}")
+                print(f"📥 Downloading from HuggingFace: {self.HF_REPO_ID}")
+                return self._download_from_huggingface(self.HF_REPO_ID)
+        else:
+            # Assume it's a HuggingFace repo ID (format: namespace/repo_name)
             return self._download_from_huggingface(model_path)
-        
-        # Check if local file exists
-        if os.path.exists(model_path):
-            return model_path
-        
-        # File doesn't exist - try to download from HuggingFace
-        print(f"⚠️  Model not found at: {model_path}")
-        print(f"📥 Downloading from HuggingFace: {self.HF_REPO_ID}")
-        return self._download_from_huggingface(self.HF_REPO_ID)
     
     def _download_from_huggingface(self, repo_id):
         """
