@@ -2,7 +2,7 @@
 """
 CLI Script for Optimizing Ensemble Weights
 
-Finds optimal weights for combining FSFM, Dima806, and ViT predictions
+Finds optimal weights for combining FSFM, Secondary, and ViT predictions
 using either Grid Search or Bayesian Optimization.
 
 Usage:
@@ -48,9 +48,9 @@ def main():
     parser.add_argument('--fsfm_mean_std', type=str,
                         default='./models/fsfm/pretrain_ds_mean_std.txt',
                         help='Path to FSFM mean_std file')
-    parser.add_argument('--dima806_model', type=str,
+    parser.add_argument('--secondary_model', type=str,
                         default='buildborderless/CommunityForensics-DeepfakeDet-ViT',
-                        help='Second model (HuggingFace repo ID)')
+                        help='Secondary model (HuggingFace repo ID)')
     parser.add_argument('--vit_model', type=str,
                         default='jacoballessio/ai-image-detect-distilled',
                         help='ViT model name (HuggingFace) or local path')
@@ -59,8 +59,8 @@ def main():
                         help='Device for inference')
     parser.add_argument('--debug', action='store_true',
                         help='Debug mode - load models one at a time')
-    parser.add_argument('--skip-dima806', action='store_true',
-                        help='Skip Dima806 model')
+    parser.add_argument('--skip-secondary', action='store_true',
+                        help='Skip Secondary model')
     
     args = parser.parse_args()
     
@@ -101,10 +101,10 @@ def main():
         from detectors.vit_detector import DeepFakeDetectorV2
         print("        ✓ ViT imported")
         
-        if not args.skip_dima806:
-            print("  [5/5] Testing Dima806 detector...")
-            from detectors.dima806_detector import Dima806Detector
-            print("        ✓ Dima806 imported")
+        if not args.skip_secondary:
+            print("  [5/5] Testing Secondary detector...")
+            from detectors.secondary_detector import SecondaryDetector
+            print("        ✓ Secondary imported")
         
         print("\n✓ All imports successful!")
         print("="*70)
@@ -112,9 +112,9 @@ def main():
     # Initialize ensemble
     print("\n📦 Loading ensemble models...")
     
-    if args.skip_dima806:
-        print("⚠️  Skipping Dima806 model (--skip-dima806 flag)")
-        # Create a minimal ensemble without Dima806
+    if args.skip_secondary:
+        print("⚠️  Skipping Secondary model (--skip-secondary flag)")
+        # Create a minimal ensemble without Secondary
         print("  [1/2] Loading FSFM...")
         from detectors.fsfm_unified_detector import FSFM_UnifiedDetector
         fsfm = FSFM_UnifiedDetector(
@@ -131,7 +131,7 @@ def main():
         )
         
         print("\n⚠️  Running with 2 models only (FSFM + ViT)")
-        print("   For full optimization, remove --skip-dima806")
+        print("   For full optimization, remove --skip-secondary")
         
         # TODO: Add 2-model optimization mode
         print("\n❌ 2-model mode not yet implemented.")
@@ -143,8 +143,8 @@ def main():
             'mean_std': args.fsfm_mean_std,
             'device': args.device
         },
-        dima806_config={
-            'model_name': args.dima806_model,
+        secondary_config={
+            'model_name': args.secondary_model,
             'device': args.device
         },
         vit_config={

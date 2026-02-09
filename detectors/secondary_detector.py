@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Second Deepfake Detector - Configurable ViT-based model
+Secondary Deepfake Detector - Configurable ViT-based model
 Default: buildborderless/CommunityForensics-DeepfakeDet-ViT
 
 This model was trained on 2.7M samples from 4,800+ generators.
@@ -15,7 +15,7 @@ from PIL import Image
 import os
 
 
-class Dima806Detector:
+class SecondaryDetector:
     """
     ViT-based deepfake detector (configurable model)
     Default: buildborderless/CommunityForensics-DeepfakeDet-ViT
@@ -28,12 +28,12 @@ class Dima806Detector:
     # Default HuggingFace model ID (can be overridden)
     HF_MODEL_ID = "buildborderless/CommunityForensics-DeepfakeDet-ViT"
     
-    def __init__(self, model_name=None, cache_dir="./models/dima806", device='cuda'):
+    def __init__(self, model_name=None, cache_dir="./models/secondary", device='cuda'):
         """
         Initialize the detector
         
         Args:
-            model_name: HuggingFace model ID or local path (default: dima806 model)
+            model_name: HuggingFace model ID or local path
             cache_dir: Directory to cache downloaded models
             device: 'cuda' or 'cpu'
         """
@@ -77,8 +77,14 @@ class Dima806Detector:
         else:
             image = image_path.convert('RGB')
         
+        # Get the expected image size from model config
+        model_image_size = getattr(self.model.config, 'image_size', 384)
+        
+        # Resize image to model's expected size before processing
+        image = image.resize((model_image_size, model_image_size), Image.Resampling.LANCZOS)
+        
         # Process with ViT processor
-        inputs = self.processor(images=image, return_tensors="pt")
+        inputs = self.processor(images=image, return_tensors="pt", do_resize=False)
         
         # Move to device
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
@@ -137,7 +143,7 @@ class Dima806Detector:
 def print_prediction_result(result):
     """Pretty print prediction results"""
     print("\n" + "="*70)
-    print("DIMA806 DEEPFAKE DETECTOR - PREDICTION RESULT")
+    print("SECONDARY DETECTOR - PREDICTION RESULT")
     print("="*70)
     
     # Color coding
@@ -162,7 +168,7 @@ def print_prediction_result(result):
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description='Dima806 Deepfake Detector Inference')
+    parser = argparse.ArgumentParser(description='Secondary Deepfake Detector Inference')
     parser.add_argument('--image', type=str, required=True,
                         help='Path to input image')
     parser.add_argument('--device', type=str, default='cpu',
@@ -172,8 +178,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     # Initialize detector
-    print("\n🚀 Initializing Dima806 Deepfake Detector...")
-    detector = Dima806Detector(device=args.device)
+    print("\n🚀 Initializing Secondary Deepfake Detector...")
+    detector = SecondaryDetector(device=args.device)
     
     # Run prediction
     print(f"\n🔍 Analyzing image: {args.image}")

@@ -53,7 +53,7 @@ class WeightOptimizer:
         Args:
             model_names: Names of models in ensemble
         """
-        self.model_names = model_names or ['fsfm', 'dima806', 'vit']
+        self.model_names = model_names or ['fsfm', 'secondary', 'vit']
         self.weights_file = "optimal_weights.json"
     
     def grid_search(self, 
@@ -431,7 +431,7 @@ def run_optimization(ensemble_detector,
     
     predictions = {
         'fsfm': [],
-        'dima806': [],
+        'secondary': [],
         'vit': []
     }
     
