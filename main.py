@@ -18,6 +18,7 @@ from detectors.ensemble_detector import EnsembleDeepfakeDetector
 from detectors.fsfm_unified_detector import FSFM_UnifiedDetector
 from detectors.cemroot_detector import CemRootDetector
 from detectors.vit_detector import DeepFakeDetectorV2
+from detectors.preprocessing import DeepfakePreprocessor, FFTAnalyzer, LandmarkAnalyzer
 
 
 # ============================================================================
@@ -35,6 +36,9 @@ DEVICE = "cpu"  # Change to "cuda" or "mps" for GPU
 FAKE_CONFIDENCE_THRESHOLD = 0.60  # 60% threshold for detecting fake
 # Lower = more sensitive (catches more fakes, more false positives)
 # Higher = less sensitive (misses some fakes, fewer false positives)
+
+# WEIGHTS FILE - Path to optimized ensemble weights
+WEIGHTS_FILE = "./optimal_weights.json"
 
 # ============================================================================
 
@@ -120,12 +124,17 @@ async def root():
         "models": ["FSFM-3C", "CemRoot", "ViT-v2"],
         "endpoints": {
             "POST /predict": "Upload image for ensemble detection",
+            "POST /predict/weighted": "Weighted ensemble (uses optimized weights)",
             "POST /predict/fsfm": "FSFM-3C only (4-class)",
             "POST /predict/cemroot": "CemRoot only",
             "POST /predict/vit": "ViT-v2 only",
+            "POST /analyze/spectrum": "FFT frequency analysis",
+            "POST /analyze/landmarks": "Facial landmark analysis",
+            "POST /analyze/full": "Full preprocessing analysis",
             "GET /health": "Health check"
         },
-        "threshold": FAKE_CONFIDENCE_THRESHOLD
+        "threshold": FAKE_CONFIDENCE_THRESHOLD,
+        "weights_file": WEIGHTS_FILE
     }
 
 
@@ -292,6 +301,156 @@ async def predict_vit(file: UploadFile = File(...)):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# NEW ENDPOINTS: Weighted Prediction & Preprocessing Analysis
+# ============================================================================
+
+@app.post("/predict/weighted")
+async def predict_weighted(file: UploadFile = File(...)):
+    """
+    Weighted ensemble prediction using optimized weights
+    
+    Uses weights from optimal_weights.json if available,
+    otherwise defaults to equal weights.
+    """
+    if ensemble is None:
+        raise HTTPException(status_code=503, detail="Models not loaded")
+    
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents))
+        
+        result = ensemble.predict_weighted(
+            image, 
+            weights_file=WEIGHTS_FILE,
+            cemroot_method='training_match'
+        )
+        
+        # Format response
+        weighted_info = result.get('weighted_voting', {})
+        
+        return JSONResponse(content={
+            "ensemble_prediction": "FAKE" if weighted_info.get('is_fake') else "REAL",
+            "weighted_score": weighted_info.get('weighted_score', 0.5),
+            "confidence": weighted_info.get('confidence', 0),
+            "interpretation": weighted_info.get('interpretation', ''),
+            "weights_used": weighted_info.get('weights_used', {}),
+            "individual_models": {
+                name: {
+                    "prediction": data['prediction'],
+                    "confidence": data['confidence'],
+                    "is_fake": data['is_fake']
+                }
+                for name, data in result['models'].items()
+            }
+        })
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Weighted prediction failed: {str(e)}")
+
+
+@app.post("/analyze/spectrum")
+async def analyze_spectrum(file: UploadFile = File(...)):
+    """
+    FFT (Frequency Domain) analysis
+    
+    Detects unnatural frequency patterns that may indicate
+    AI generation or manipulation artifacts.
+    """
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents))
+        
+        analyzer = FFTAnalyzer()
+        result = analyzer.analyze(image)
+        
+        # Remove large magnitude spectrum from response (too big for API)
+        response = {
+            "anomaly_score": result['anomaly_score'],
+            "high_freq_ratio": result['high_freq_ratio'],
+            "interpretation": result['interpretation'],
+            "radial_profile_summary": {
+                "low_freq_energy": float(sum(result['radial_profile'][:10])),
+                "high_freq_energy": float(sum(result['radial_profile'][-10:])),
+            }
+        }
+        
+        return JSONResponse(content=response)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"FFT analysis failed: {str(e)}")
+
+
+@app.post("/analyze/landmarks")
+async def analyze_landmarks(file: UploadFile = File(...)):
+    """
+    Facial landmark consistency analysis
+    
+    Checks facial proportions and symmetry against
+    expected human geometry.
+    """
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents))
+        
+        analyzer = LandmarkAnalyzer()
+        result = analyzer.analyze(image)
+        
+        # Remove raw landmarks from response (too large)
+        response = {
+            "consistency_score": result.get('consistency_score', 0.5),
+            "symmetry_score": result.get('symmetry_score', 0.5),
+            "proportion_scores": result.get('proportion_scores', {}),
+            "issues": result.get('issues', []),
+            "interpretation": result.get('interpretation', ''),
+            "error": result.get('error')
+        }
+        
+        return JSONResponse(content=response)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Landmark analysis failed: {str(e)}")
+
+
+@app.post("/analyze/full")
+async def analyze_full(file: UploadFile = File(...)):
+    """
+    Full preprocessing analysis
+    
+    Combines FFT and landmark analysis for comprehensive
+    deepfake detection preprocessing.
+    """
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents))
+        
+        preprocessor = DeepfakePreprocessor()
+        result = preprocessor.analyze(image)
+        
+        # Summarize for API response
+        response = {
+            "combined_suspicion_score": result['combined_suspicion_score'],
+            "interpretation": result['interpretation'],
+            "recommendation": result['recommendation'],
+            "fft_analysis": {
+                "anomaly_score": result['fft_analysis']['anomaly_score'],
+                "high_freq_ratio": result['fft_analysis']['high_freq_ratio'],
+                "interpretation": result['fft_analysis']['interpretation']
+            },
+            "landmark_analysis": {
+                "consistency_score": result['landmark_analysis'].get('consistency_score', 0.5),
+                "symmetry_score": result['landmark_analysis'].get('symmetry_score', 0.5),
+                "issues": result['landmark_analysis'].get('issues', []),
+                "interpretation": result['landmark_analysis'].get('interpretation', '')
+            }
+        }
+        
+        return JSONResponse(content=response)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Full analysis failed: {str(e)}")
 
 
 if __name__ == "__main__":

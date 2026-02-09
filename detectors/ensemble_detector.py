@@ -146,6 +146,97 @@ class EnsembleDeepfakeDetector:
 
         return result
 
+    def predict_weighted(self, image_path, weights=None, 
+                         weights_file='optimal_weights.json',
+                         cemroot_method='training_match'):
+        """
+        Get weighted ensemble prediction using optimized weights
+        
+        Args:
+            image_path: Path to image or PIL Image
+            weights: Optional dict of weights {'fsfm': w1, 'cemroot': w2, 'vit': w3}
+                     If not provided, loads from weights_file
+            weights_file: Path to JSON file with optimized weights
+            cemroot_method: Preprocessing method for CemRoot
+            
+        Returns:
+            Dictionary with weighted prediction and individual model outputs
+        """
+        import os
+        import json
+        
+        # Load weights from file if not provided
+        if weights is None:
+            if os.path.exists(weights_file):
+                with open(weights_file, 'r') as f:
+                    data = json.load(f)
+                    weights = data.get('weights', {})
+            else:
+                # Default to equal weights
+                weights = {'fsfm': 1/3, 'cemroot': 1/3, 'vit': 1/3}
+        
+        # Normalize weights to sum to 1
+        total = sum(weights.values())
+        if total > 0:
+            weights = {k: v/total for k, v in weights.items()}
+        
+        # Get individual predictions
+        result = self.predict(image_path, cemroot_method)
+        
+        # Calculate weighted score
+        fake_probs = self.get_fake_probabilities(result)
+        
+        weighted_score = sum(
+            weights.get(name, 1/3) * prob 
+            for name, prob in fake_probs.items()
+        )
+        
+        # Add weighted voting to result
+        result['weighted_voting'] = {
+            'weights_used': weights,
+            'weighted_score': weighted_score,
+            'is_fake': weighted_score >= 0.5,
+            'confidence': abs(weighted_score - 0.5) * 2,  # Distance from threshold
+            'interpretation': self._interpret_weighted_score(weighted_score)
+        }
+        
+        return result
+    
+    def get_fake_probabilities(self, prediction_result):
+        """
+        Extract fake probabilities from prediction result
+        
+        Used for weight optimization and weighted voting.
+        
+        Args:
+            prediction_result: Output from predict() method
+            
+        Returns:
+            Dict mapping model name to fake probability
+        """
+        probs = {}
+        
+        for name, data in prediction_result['models'].items():
+            if data['is_fake']:
+                # If model says fake, use its confidence as fake probability
+                probs[name] = data['confidence']
+            else:
+                # If model says real, fake probability is 1 - confidence
+                probs[name] = 1 - data['confidence']
+        
+        return probs
+    
+    def _interpret_weighted_score(self, score):
+        """Interpret weighted score"""
+        if score < 0.3:
+            return "LOW - Likely authentic image"
+        elif score < 0.5:
+            return "MEDIUM-LOW - Probably real but some doubts"
+        elif score < 0.7:
+            return "MEDIUM-HIGH - Suspicious, likely manipulated"
+        else:
+            return "HIGH - Strong evidence of deepfake"
+
 
 def print_ensemble_result(result):
     """Pretty print individual model results"""

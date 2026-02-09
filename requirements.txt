@@ -70,3 +70,9 @@ urllib3==2.6.2
 uvicorn==0.38.0
 Werkzeug==3.1.4
 wrapt==2.0.1
+
+# New dependencies for ensemble improvements
+optuna>=3.0.0          # Bayesian optimization for weight tuning
+scikit-learn>=1.0.0    # Cross-validation and metrics
+dlib>=19.22.0          # Facial landmark detection (optional)
+mediapipe>=0.10.0      # Alternative landmark detection (optional)
