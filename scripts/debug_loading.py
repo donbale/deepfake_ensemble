@@ -83,12 +83,12 @@ def step6():
 
 test_step("FSFM module import", step6)
 
-# Step 7: Actually load FSFM
+# Step 7: Actually load FSFM (auto-downloads from HuggingFace)
 def step7():
     from detectors.fsfm_unified_detector import FSFM_UnifiedDetector
     detector = FSFM_UnifiedDetector(
-        checkpoint_path='./models/fsfm/checkpoint-min_train_loss.pth',
-        mean_std_path='./models/fsfm/pretrain_ds_mean_std.txt',
+        # checkpoint_path=None means auto-download from HuggingFace
+        # mean_std_path=None means auto-download from HuggingFace
         device='cpu'
     )
     print("       FSFM model loaded")

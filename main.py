@@ -26,10 +26,9 @@ from detectors.preprocessing import DeepfakePreprocessor, FFTAnalyzer, LandmarkA
 # NOTE: Update these paths for your machine (Linux vs Windows)
 # ============================================================================
 
-FSFM_CHECKPOINT = "./models/fsfm/checkpoint-min_train_loss.pth"
-FSFM_MEAN_STD = "./models/fsfm/pretrain_ds_mean_std.txt"
-
-# CemRoot - auto-downloads from HuggingFace if local file doesn't exist
+# FSFM - auto-downloads from HuggingFace if local files don't exist
+FSFM_CHECKPOINT = None  # Auto-download from Wolowolo/fsfm-3c
+FSFM_MEAN_STD = None    # Auto-download from Wolowolo/fsfm-3c
 CEMROOT_MODEL = "CemRoot/deepfake-detection-model"  # HuggingFace repo ID (or local path)
 
 # ViT Model - can be HuggingFace name OR local path

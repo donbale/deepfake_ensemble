@@ -29,17 +29,29 @@ class FSFM_UnifiedDetector:
     Detects: Real, Deepfake, Diffusion, Spoofing
     """
     
-    def __init__(self, checkpoint_path, mean_std_path, device='cuda'):
+    # HuggingFace repo for auto-download
+    HF_REPO_ID = "Wolowolo/fsfm-3c"
+    HF_CHECKPOINT_PATH = "finetuned_models/Unified-detector/v1_Fine-tuned_on_4_classes/checkpoint-min_train_loss.pth"
+    HF_MEAN_STD_PATH = "finetuned_models/Unified-detector/v1_Fine-tuned_on_4_classes/pretrain_ds_mean_std.txt"
+    
+    def __init__(self, checkpoint_path=None, mean_std_path=None, device='cuda', 
+                 cache_dir="./models/fsfm"):
         """
         Initialize the detector
         
         Args:
-            checkpoint_path: Path to checkpoint-min_train_loss.pth
-            mean_std_path: Path to pretrain_ds_mean_std.txt
+            checkpoint_path: Path to checkpoint .pth file (or None to auto-download)
+            mean_std_path: Path to mean_std .txt file (or None to auto-download)
             device: 'cuda' or 'cpu'
+            cache_dir: Directory to cache downloaded models
         """
         self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
+        self.cache_dir = cache_dir
         print(f"Using device: {self.device}")
+        
+        # Resolve paths (download from HuggingFace if needed)
+        checkpoint_path = self._resolve_path(checkpoint_path, self.HF_CHECKPOINT_PATH, "checkpoint")
+        mean_std_path = self._resolve_path(mean_std_path, self.HF_MEAN_STD_PATH, "mean_std")
         
         # Load normalization stats
         self.mean, self.std = self._load_normalization_stats(mean_std_path)
@@ -73,6 +85,49 @@ class FSFM_UnifiedDetector:
             2: "Diffusion/AIGC",
             3: "Spoofing/Presentation-attack"
         }
+
+    def _resolve_path(self, local_path, hf_filename, file_type):
+        """
+        Resolve file path - download from HuggingFace if needed
+        
+        Args:
+            local_path: Local path or None
+            hf_filename: Filename in HuggingFace repo
+            file_type: Description for logging
+            
+        Returns:
+            Local path to the file
+        """
+        # If local path provided and exists, use it
+        if local_path and os.path.exists(local_path):
+            return local_path
+        
+        # Need to download from HuggingFace
+        if local_path:
+            print(f"⚠️  {file_type} not found at: {local_path}")
+        print(f"📥 Downloading {file_type} from HuggingFace: {self.HF_REPO_ID}")
+        
+        try:
+            from huggingface_hub import hf_hub_download
+            
+            os.makedirs(self.cache_dir, exist_ok=True)
+            
+            local_file = hf_hub_download(
+                repo_id=self.HF_REPO_ID,
+                filename=hf_filename,
+                local_dir=self.cache_dir,
+                local_dir_use_symlinks=False
+            )
+            
+            print(f"✓ Downloaded to: {local_file}")
+            return local_file
+            
+        except ImportError:
+            raise RuntimeError(
+                "huggingface_hub not installed. Install with: pip install huggingface_hub"
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to download {file_type} from HuggingFace: {e}")
 
     def _load_normalization_stats(self, mean_std_path):
         """Load mean and std from pretrain_ds_mean_std.txt"""
