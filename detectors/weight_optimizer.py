@@ -368,6 +368,7 @@ def run_optimization(ensemble_detector,
                      dataset_path: str,
                      method: str = 'bayesian',
                      n_trials: int = 100,
+                     max_samples: int = None,
                      output_path: str = 'optimal_weights.json') -> OptimizationResult:
     """
     Convenience function to run full optimization pipeline
@@ -377,6 +378,7 @@ def run_optimization(ensemble_detector,
         dataset_path: Path to validation dataset
         method: 'grid' or 'bayesian'
         n_trials: Number of trials for bayesian optimization
+        max_samples: Maximum number of images to process (None = all)
         output_path: Where to save weights
         
     Returns:
@@ -399,6 +401,30 @@ def run_optimization(ensemble_detector,
         raise ValueError("No images found in dataset")
     
     image_paths, labels = loader.load()
+    
+    # Sample if max_samples specified
+    if max_samples and max_samples < len(image_paths):
+        import random
+        print(f"\n🎲 Sampling {max_samples} images (stratified)...")
+        
+        # Stratified sampling to maintain class balance
+        real_indices = [i for i, l in enumerate(labels) if l == 0]
+        fake_indices = [i for i, l in enumerate(labels) if l == 1]
+        
+        # Calculate samples per class
+        n_real = min(len(real_indices), max_samples // 2)
+        n_fake = min(len(fake_indices), max_samples - n_real)
+        
+        # Random sample from each class
+        random.shuffle(real_indices)
+        random.shuffle(fake_indices)
+        sampled_indices = real_indices[:n_real] + fake_indices[:n_fake]
+        random.shuffle(sampled_indices)  # Mix them up
+        
+        image_paths = [image_paths[i] for i in sampled_indices]
+        labels = [labels[i] for i in sampled_indices]
+        
+        print(f"   Sampled: {n_real} real + {n_fake} fake = {len(image_paths)} total")
     
     # Get predictions from each model
     print(f"\n🔍 Getting predictions from all models...")

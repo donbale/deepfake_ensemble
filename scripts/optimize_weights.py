@@ -38,6 +38,8 @@ def main():
                         help='Number of trials for Bayesian optimization (default: 100)')
     parser.add_argument('--output', type=str, default='optimal_weights.json',
                         help='Output path for weights (default: optimal_weights.json)')
+    parser.add_argument('--max-samples', type=int, default=2000,
+                        help='Max images to process (default: 2000, use 0 for all)')
     
     # Model paths
     parser.add_argument('--fsfm_checkpoint', type=str,
@@ -152,11 +154,13 @@ def main():
     )
     
     # Run optimization
+    max_samples = args.max_samples if args.max_samples > 0 else None
     result = run_optimization(
         ensemble_detector=ensemble,
         dataset_path=args.dataset,
         method=args.method,
         n_trials=args.trials,
+        max_samples=max_samples,
         output_path=args.output
     )
     
