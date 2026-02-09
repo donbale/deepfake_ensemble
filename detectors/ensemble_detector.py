@@ -5,8 +5,8 @@ Shows each model's prediction separately to leverage their different specializat
 
 Models:
 1. FSFM-3C (Wolowolo) - 4-class ViT - Best for: Spoofing, advanced manipulations
-2. CemRoot - EfficientNetB7 + Attention - Best for: Diffusion models, AIGC
-3. ViT-v2 (prithivMLmods) - ViT-base - Best for: Traditional deepfakes, ChatGPT gen
+2. Dima806 - ViT fine-tuned on deepfakes - Best for: General deepfake detection
+3. ViT-v2 (jacoballessio) - ViT-base - Best for: AI-generated images
 """
 
 import torch
@@ -18,7 +18,7 @@ import sys
 
 # Import individual detectors
 from .fsfm_unified_detector import FSFM_UnifiedDetector
-from .cemroot_detector import CemRootDetector
+from .dima806_detector import Dima806Detector
 from .vit_detector import DeepFakeDetectorV2
 
 
@@ -28,13 +28,13 @@ class EnsembleDeepfakeDetector:
     No voting/aggregation - shows each model's specialty
     """
 
-    def __init__(self, fsfm_config, cemroot_config, vit_config):
+    def __init__(self, fsfm_config, dima806_config, vit_config):
         """
         Initialize ensemble detector
 
         Args:
             fsfm_config: Dict with 'checkpoint', 'mean_std', 'device'
-            cemroot_config: Dict with 'model_path', 'image_size'
+            dima806_config: Dict with 'model_name', 'device'
             vit_config: Dict with 'model_name', 'cache_dir', 'device'
         """
         print("\n" + "="*70)
@@ -49,11 +49,11 @@ class EnsembleDeepfakeDetector:
             device=fsfm_config.get('device', 'cuda')
         )
 
-        # Initialize Model 2: CemRoot
-        print("\n[2/3] Loading CemRoot EfficientNet Detector...")
-        self.cemroot = CemRootDetector(
-            model_path=cemroot_config['model_path'],
-            image_size=cemroot_config.get('image_size', 128)
+        # Initialize Model 2: Dima806
+        print("\n[2/3] Loading Dima806 Detector...")
+        self.dima806 = Dima806Detector(
+            model_name=dima806_config.get('model_name'),
+            device=dima806_config.get('device', 'cuda')
         )
 
         # Initialize Model 3: ViT-v2
@@ -68,13 +68,12 @@ class EnsembleDeepfakeDetector:
         print("✓ ALL MODELS LOADED SUCCESSFULLY!")
         print("="*70 + "\n")
 
-    def predict(self, image_path, cemroot_method='training_match'):
+    def predict(self, image_path):
         """
         Get predictions from all 3 models individually
 
         Args:
             image_path: Path to image or PIL Image
-            cemroot_method: Preprocessing method for CemRoot ('training_match' recommended)
 
         Returns:
             Dictionary with individual model predictions (no aggregation)
@@ -85,20 +84,16 @@ class EnsembleDeepfakeDetector:
         print("  [1/3] FSFM-3C predicting...")
         fsfm_result = self.fsfm.predict(image_path, return_all_probs=True)
 
-        print("  [2/3] CemRoot predicting...")
-        cemroot_result = self.cemroot.predict(
-            image_path,
-            method=cemroot_method,
-            return_all_probs=True
-        )
+        print("  [2/3] Dima806 predicting...")
+        dima806_result = self.dima806.predict(image_path, return_all_probs=True)
 
         print("  [3/3] ViT-v2 predicting...")
         vit_result = self.vit.predict(image_path, return_all_probs=True)
 
         # Normalize to binary (Real vs Fake) for summary
         fsfm_is_fake = fsfm_result['predicted_class'] != 0
-        cemroot_is_fake = cemroot_result['predicted_class'] == 0
-        vit_is_fake = "Deepfake" in vit_result['predicted_label']
+        dima806_is_fake = 'fake' in dima806_result['predicted_label'].lower()
+        vit_is_fake = 'fake' in vit_result['predicted_label'].lower() or 'Deepfake' in vit_result['predicted_label']
 
         # Build result showing each model's output
         result = {
@@ -111,14 +106,13 @@ class EnsembleDeepfakeDetector:
                     'all_probabilities': fsfm_result.get('all_probabilities', {}),
                     'specialty': 'Spoofing, Physical attacks, Advanced manipulations'
                 },
-                'cemroot': {
-                    'name': 'CemRoot (EfficientNet)',
-                    'prediction': cemroot_result['predicted_label'],
-                    'confidence': cemroot_result['confidence'],
-                    'is_fake': cemroot_is_fake,
-                    'all_probabilities': cemroot_result.get('all_probabilities', {}),
-                    'preprocessing': cemroot_method,
-                    'specialty': 'Diffusion models, AIGC, Stable Diffusion'
+                'dima806': {
+                    'name': 'Dima806 (ViT fine-tuned)',
+                    'prediction': dima806_result['predicted_label'],
+                    'confidence': dima806_result['confidence'],
+                    'is_fake': dima806_is_fake,
+                    'all_probabilities': dima806_result.get('all_probabilities', {}),
+                    'specialty': 'General deepfake detection'
                 },
                 'vit': {
                     'name': 'ViT-v2 (Transformers)',
@@ -130,7 +124,7 @@ class EnsembleDeepfakeDetector:
                 }
             },
             'summary': {
-                'models_detecting_fake': sum([fsfm_is_fake, cemroot_is_fake, vit_is_fake]),
+                'models_detecting_fake': sum([fsfm_is_fake, dima806_is_fake, vit_is_fake]),
                 'total_models': 3,
                 'detected_by': []
             }
@@ -139,25 +133,23 @@ class EnsembleDeepfakeDetector:
         # Track which models detected fake
         if fsfm_is_fake:
             result['summary']['detected_by'].append('FSFM-3C')
-        if cemroot_is_fake:
-            result['summary']['detected_by'].append('CemRoot')
+        if dima806_is_fake:
+            result['summary']['detected_by'].append('Dima806')
         if vit_is_fake:
             result['summary']['detected_by'].append('ViT-v2')
 
         return result
 
     def predict_weighted(self, image_path, weights=None, 
-                         weights_file='optimal_weights.json',
-                         cemroot_method='training_match'):
+                         weights_file='optimal_weights.json'):
         """
         Get weighted ensemble prediction using optimized weights
         
         Args:
             image_path: Path to image or PIL Image
-            weights: Optional dict of weights {'fsfm': w1, 'cemroot': w2, 'vit': w3}
+            weights: Optional dict of weights {'fsfm': w1, 'dima806': w2, 'vit': w3}
                      If not provided, loads from weights_file
             weights_file: Path to JSON file with optimized weights
-            cemroot_method: Preprocessing method for CemRoot
             
         Returns:
             Dictionary with weighted prediction and individual model outputs
@@ -173,7 +165,7 @@ class EnsembleDeepfakeDetector:
                     weights = data.get('weights', {})
             else:
                 # Default to equal weights
-                weights = {'fsfm': 1/3, 'cemroot': 1/3, 'vit': 1/3}
+                weights = {'fsfm': 1/3, 'dima806': 1/3, 'vit': 1/3}
         
         # Normalize weights to sum to 1
         total = sum(weights.values())
@@ -181,7 +173,7 @@ class EnsembleDeepfakeDetector:
             weights = {k: v/total for k, v in weights.items()}
         
         # Get individual predictions
-        result = self.predict(image_path, cemroot_method)
+        result = self.predict(image_path)
         
         # Calculate weighted score
         fake_probs = self.get_fake_probabilities(result)

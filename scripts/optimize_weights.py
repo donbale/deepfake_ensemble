@@ -2,7 +2,7 @@
 """
 CLI Script for Optimizing Ensemble Weights
 
-Finds optimal weights for combining FSFM, CemRoot, and ViT predictions
+Finds optimal weights for combining FSFM, Dima806, and ViT predictions
 using either Grid Search or Bayesian Optimization.
 
 Usage:
@@ -48,9 +48,9 @@ def main():
     parser.add_argument('--fsfm_mean_std', type=str,
                         default='./models/fsfm/pretrain_ds_mean_std.txt',
                         help='Path to FSFM mean_std file')
-    parser.add_argument('--cemroot_model', type=str,
-                        default='CemRoot/deepfake-detection-model',
-                        help='CemRoot model (HuggingFace repo ID or local .h5 path)')
+    parser.add_argument('--dima806_model', type=str,
+                        default='dima806/deepfake_vs_real_image_detection',
+                        help='Dima806 model (HuggingFace repo ID)')
     parser.add_argument('--vit_model', type=str,
                         default='jacoballessio/ai-image-detect-distilled',
                         help='ViT model name (HuggingFace) or local path')
@@ -59,8 +59,8 @@ def main():
                         help='Device for inference')
     parser.add_argument('--debug', action='store_true',
                         help='Debug mode - load models one at a time')
-    parser.add_argument('--skip-cemroot', action='store_true',
-                        help='Skip CemRoot model (if TensorFlow is crashing)')
+    parser.add_argument('--skip-dima806', action='store_true',
+                        help='Skip Dima806 model')
     
     args = parser.parse_args()
     
@@ -101,10 +101,10 @@ def main():
         from detectors.vit_detector import DeepFakeDetectorV2
         print("        ✓ ViT imported")
         
-        if not args.skip_cemroot:
-            print("  [5/5] Testing CemRoot detector...")
-            from detectors.cemroot_detector import CemRootDetector
-            print("        ✓ CemRoot imported")
+        if not args.skip_dima806:
+            print("  [5/5] Testing Dima806 detector...")
+            from detectors.dima806_detector import Dima806Detector
+            print("        ✓ Dima806 imported")
         
         print("\n✓ All imports successful!")
         print("="*70)
@@ -112,9 +112,9 @@ def main():
     # Initialize ensemble
     print("\n📦 Loading ensemble models...")
     
-    if args.skip_cemroot:
-        print("⚠️  Skipping CemRoot model (--skip-cemroot flag)")
-        # Create a minimal ensemble without CemRoot
+    if args.skip_dima806:
+        print("⚠️  Skipping Dima806 model (--skip-dima806 flag)")
+        # Create a minimal ensemble without Dima806
         print("  [1/2] Loading FSFM...")
         from detectors.fsfm_unified_detector import FSFM_UnifiedDetector
         fsfm = FSFM_UnifiedDetector(
@@ -131,10 +131,10 @@ def main():
         )
         
         print("\n⚠️  Running with 2 models only (FSFM + ViT)")
-        print("   For full optimization, fix TensorFlow and remove --skip-cemroot")
+        print("   For full optimization, remove --skip-dima806")
         
         # TODO: Add 2-model optimization mode
-        print("\n❌ 2-model mode not yet implemented. Fix TensorFlow first.")
+        print("\n❌ 2-model mode not yet implemented.")
         sys.exit(1)
     
     ensemble = EnsembleDeepfakeDetector(
@@ -143,9 +143,9 @@ def main():
             'mean_std': args.fsfm_mean_std,
             'device': args.device
         },
-        cemroot_config={
-            'model_path': args.cemroot_model,
-            'image_size': 128
+        dima806_config={
+            'model_name': args.dima806_model,
+            'device': args.device
         },
         vit_config={
             'model_name': args.vit_model,

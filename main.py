@@ -29,7 +29,9 @@ from detectors.preprocessing import DeepfakePreprocessor, FFTAnalyzer, LandmarkA
 # FSFM - auto-downloads from HuggingFace if local files don't exist
 FSFM_CHECKPOINT = None  # Auto-download from Wolowolo/fsfm-3c
 FSFM_MEAN_STD = None    # Auto-download from Wolowolo/fsfm-3c
-CEMROOT_MODEL = "CemRoot/deepfake-detection-model"  # HuggingFace repo ID (or local path)
+
+# Dima806 Model - ViT fine-tuned on deepfakes (replaces CemRoot)
+DIMA806_MODEL = "dima806/deepfake_vs_real_image_detection"  # HuggingFace repo ID
 
 # ViT Model - can be HuggingFace name OR local path
 # VIT_MODEL = "prithivMLmods/Deep-Fake-Detector-v2-Model"  # Original
