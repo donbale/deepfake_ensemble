@@ -47,11 +47,11 @@ def main():
                         default='./models/fsfm/pretrain_ds_mean_std.txt',
                         help='Path to FSFM mean_std file')
     parser.add_argument('--cemroot_model', type=str,
-                        default='./models/cemroot/best_model_effatt.h5',
-                        help='Path to CemRoot model')
+                        default='CemRoot/deepfake-detection-model',
+                        help='CemRoot model (HuggingFace repo ID or local .h5 path)')
     parser.add_argument('--vit_model', type=str,
-                        default='prithivMLmods/Deep-Fake-Detector-v2-Model',
-                        help='ViT model name or path')
+                        default='jacoballessio/ai-image-detect-distilled',
+                        help='ViT model name (HuggingFace) or local path')
     parser.add_argument('--device', type=str, default='cpu',
                         choices=['cuda', 'cpu'],
                         help='Device for inference')

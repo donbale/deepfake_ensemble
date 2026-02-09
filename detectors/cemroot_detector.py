@@ -31,18 +31,27 @@ class CemRootDetector:
     - Class 1: Real (Authentic)
     """
     
-    def __init__(self, model_path, image_size=128):
+    # HuggingFace repo for auto-download
+    HF_REPO_ID = "CemRoot/deepfake-detection-model"
+    HF_FILENAME = "best_model_effatt.h5"
+    
+    def __init__(self, model_path=None, image_size=128, cache_dir="./models/cemroot"):
         """
         Initialize the detector
         
         Args:
-            model_path: Path to best_model_effatt.h5
+            model_path: Path to best_model_effatt.h5 OR HuggingFace repo ID
+                        If None, downloads from HuggingFace automatically
             image_size: Input image size (default: 128)
+            cache_dir: Directory to cache downloaded models
         """
         self.image_size = image_size
-        self.model_path = model_path
+        self.cache_dir = cache_dir
         
-        print(f"Loading model from: {model_path}")
+        # Resolve model path (download from HuggingFace if needed)
+        self.model_path = self._resolve_model_path(model_path)
+        
+        print(f"Loading model from: {self.model_path}")
         
         # Try loading the model
         self.model = self._load_model()
@@ -54,6 +63,74 @@ class CemRootDetector:
             0: "FAKE (AI-Generated)",
             1: "REAL (Authentic)"
         }
+    
+    def _resolve_model_path(self, model_path):
+        """
+        Resolve model path - download from HuggingFace if needed
+        
+        Args:
+            model_path: Local path, HuggingFace repo ID, or None
+            
+        Returns:
+            Local path to the model file
+        """
+        # If no path provided, use default cache location
+        if model_path is None:
+            model_path = os.path.join(self.cache_dir, self.HF_FILENAME)
+        
+        # Check if it's a HuggingFace repo ID (contains '/')
+        if "/" in model_path and not os.path.exists(model_path):
+            # It's a HuggingFace repo ID
+            return self._download_from_huggingface(model_path)
+        
+        # Check if local file exists
+        if os.path.exists(model_path):
+            return model_path
+        
+        # File doesn't exist - try to download from HuggingFace
+        print(f"⚠️  Model not found at: {model_path}")
+        print(f"📥 Downloading from HuggingFace: {self.HF_REPO_ID}")
+        return self._download_from_huggingface(self.HF_REPO_ID)
+    
+    def _download_from_huggingface(self, repo_id):
+        """
+        Download model from HuggingFace Hub
+        
+        Args:
+            repo_id: HuggingFace repository ID (e.g., "CemRoot/deepfake-detection-model")
+            
+        Returns:
+            Local path to downloaded model
+        """
+        try:
+            from huggingface_hub import hf_hub_download
+            
+            print(f"📥 Downloading {self.HF_FILENAME} from {repo_id}...")
+            print(f"   (This is ~780MB, may take a few minutes)")
+            
+            # Ensure cache directory exists
+            os.makedirs(self.cache_dir, exist_ok=True)
+            
+            # Download the file
+            local_path = hf_hub_download(
+                repo_id=repo_id,
+                filename=self.HF_FILENAME,
+                cache_dir=self.cache_dir,
+                local_dir=self.cache_dir,
+                local_dir_use_symlinks=False
+            )
+            
+            print(f"✓ Downloaded to: {local_path}")
+            return local_path
+            
+        except ImportError:
+            raise RuntimeError(
+                "huggingface_hub not installed. Install with: pip install huggingface_hub\n"
+                "Or manually download the model from: "
+                f"https://huggingface.co/{repo_id}"
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to download from HuggingFace: {e}")
     
     def _attention_block(self, features, depth):
         """

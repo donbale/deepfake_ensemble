@@ -104,11 +104,11 @@ def step8():
 
 test_step("CemRoot module import", step8)
 
-# Step 9: Actually load CemRoot
+# Step 9: Actually load CemRoot (auto-downloads from HuggingFace)
 def step9():
     from detectors.cemroot_detector import CemRootDetector
     detector = CemRootDetector(
-        model_path='./models/cemroot/best_model_effatt.h5',
+        # model_path=None means auto-download from HuggingFace
         image_size=128
     )
     print("       CemRoot model loaded")
@@ -128,7 +128,7 @@ test_step("ViT module import", step10)
 def step11():
     from detectors.vit_detector import DeepFakeDetectorV2
     detector = DeepFakeDetectorV2(
-        model_name='prithivMLmods/Deep-Fake-Detector-v2-Model',
+        model_name='jacoballessio/ai-image-detect-distilled',
         device='cpu'
     )
     print("       ViT model loaded")

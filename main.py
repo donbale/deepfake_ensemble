@@ -23,13 +23,20 @@ from detectors.preprocessing import DeepfakePreprocessor, FFTAnalyzer, LandmarkA
 
 # ============================================================================
 # CONFIGURATION - CHANGE PATHS HERE
+# NOTE: Update these paths for your machine (Linux vs Windows)
 # ============================================================================
 
 FSFM_CHECKPOINT = "./models/fsfm/checkpoint-min_train_loss.pth"
 FSFM_MEAN_STD = "./models/fsfm/pretrain_ds_mean_std.txt"
-CEMROOT_MODEL = "./models/cemroot/best_model_effatt.h5"
-VIT_MODEL = "prithivMLmods/Deep-Fake-Detector-v2-Model"
-VIT_CACHE = "./models/vit-v2"
+
+# CemRoot - auto-downloads from HuggingFace if local file doesn't exist
+CEMROOT_MODEL = "CemRoot/deepfake-detection-model"  # HuggingFace repo ID (or local path)
+
+# ViT Model - can be HuggingFace name OR local path
+# VIT_MODEL = "prithivMLmods/Deep-Fake-Detector-v2-Model"  # Original
+VIT_MODEL = "jacoballessio/ai-image-detect-distilled"  # Downloads from HuggingFace
+VIT_CACHE = "./models/vit-cache"
+
 DEVICE = "cpu"  # Change to "cuda" or "mps" for GPU
 
 # THRESHOLD CONFIGURATION - CHANGE THIS TO ADJUST SENSITIVITY

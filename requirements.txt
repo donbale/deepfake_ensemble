@@ -74,6 +74,7 @@ wrapt==2.0.1
 # New dependencies for ensemble improvements
 optuna>=3.0.0          # Bayesian optimization for weight tuning
 scikit-learn>=1.0.0    # Cross-validation and metrics
+huggingface_hub>=0.20.0  # Auto-download models from HuggingFace
 
 # OPTIONAL: For facial landmark detection (preprocessing.py)
 # These require compilation and may not work on Python 3.13
