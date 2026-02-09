@@ -27,7 +27,8 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
 
             del self.norm  # remove the original norm
 
-    def forward_features(self, x):
+    def forward_features(self, x, **kwargs):
+        # Note: **kwargs added for timm>=0.9.0 compatibility (accepts attn_mask, etc.)
         B = x.shape[0]
         x = self.patch_embed(x)
 
