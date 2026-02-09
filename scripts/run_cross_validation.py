@@ -9,9 +9,14 @@ Usage:
     python scripts/run_cross_validation.py --dataset ./data --folds 5
 """
 
+# IMPORTANT: Set these BEFORE importing TensorFlow to avoid PyTorch/TF CUDA conflicts
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Force TensorFlow to use CPU
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TF warnings
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+
 import argparse
 import sys
-import os
 import json
 
 # Add parent directory to path for imports
