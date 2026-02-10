@@ -79,5 +79,5 @@ huggingface_hub>=0.20.0  # Auto-download models from HuggingFace
 # OPTIONAL: For facial landmark detection (preprocessing.py)
 # These require compilation and may not work on Python 3.13
 # Install separately if needed:
-#   pip install dlib           # Requires CMake: sudo apt install cmake
+dlib           # Requires CMake: sudo apt install cmake
 #   pip install mediapipe      # Alternative, easier to install
