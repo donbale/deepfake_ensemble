@@ -2,7 +2,7 @@
 """
 CLI Script for Optimizing Ensemble Weights
 
-Finds optimal weights for combining FSFM, Secondary, and ViT predictions
+Finds optimal weights for combining FSFM, Organika, and SigLIP predictions
 using either Grid Search or Bayesian Optimization.
 
 Usage:
@@ -43,25 +43,21 @@ def main():
                         help='Max images PER DATASET (default: 2000, use 0 for all)')
     
     # Model paths
-    parser.add_argument('--fsfm_checkpoint', type=str,
-                        default='./models/fsfm/checkpoint-min_train_loss.pth',
-                        help='Path to FSFM checkpoint')
-    parser.add_argument('--fsfm_mean_std', type=str,
-                        default='./models/fsfm/pretrain_ds_mean_std.txt',
-                        help='Path to FSFM mean_std file')
-    parser.add_argument('--secondary_model', type=str,
-                        default='buildborderless/CommunityForensics-DeepfakeDet-ViT',
-                        help='Secondary model (HuggingFace repo ID)')
-    parser.add_argument('--vit_model', type=str,
-                        default='jacoballessio/ai-image-detect-distilled',
-                        help='ViT model name (HuggingFace) or local path')
+    parser.add_argument('--fsfm_checkpoint', type=str, default=None,
+                        help='Path to FSFM checkpoint (auto-downloads if not set)')
+    parser.add_argument('--fsfm_mean_std', type=str, default=None,
+                        help='Path to FSFM mean_std file (auto-downloads if not set)')
+    parser.add_argument('--organika_model', type=str,
+                        default='Organika/sdxl-detector',
+                        help='Organika model (HuggingFace repo ID)')
+    parser.add_argument('--siglip_model', type=str,
+                        default='prithivMLmods/open-deepfake-detection',
+                        help='SigLIP model (HuggingFace repo ID)')
     parser.add_argument('--device', type=str, default='cpu',
                         choices=['cuda', 'cpu'],
                         help='Device for inference')
     parser.add_argument('--debug', action='store_true',
                         help='Debug mode - load models one at a time')
-    parser.add_argument('--skip-secondary', action='store_true',
-                        help='Skip Secondary model')
     
     args = parser.parse_args()
     
@@ -97,23 +93,17 @@ def main():
         import torch
         print(f"        ✓ PyTorch {torch.__version__}")
         
-        print("  [2/4] Testing TensorFlow...")
-        os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TF warnings
-        import tensorflow as tf
-        print(f"        ✓ TensorFlow {tf.__version__}")
-        
-        print("  [3/4] Testing FSFM detector...")
+        print("  [2/4] Testing FSFM detector...")
         from detectors.fsfm_unified_detector import FSFM_UnifiedDetector
         print("        ✓ FSFM imported")
         
-        print("  [4/4] Testing ViT detector...")
-        from detectors.vit_detector import DeepFakeDetectorV2
-        print("        ✓ ViT imported")
+        print("  [3/4] Testing Organika detector...")
+        from detectors.organika_detector import OrganikaDetector
+        print("        ✓ Organika imported")
         
-        if not args.skip_secondary:
-            print("  [5/5] Testing Secondary detector...")
-            from detectors.secondary_detector import SecondaryDetector
-            print("        ✓ Secondary imported")
+        print("  [4/4] Testing SigLIP detector...")
+        from detectors.siglip_detector import SigLIPDetector
+        print("        ✓ SigLIP imported")
         
         print("\n✓ All imports successful!")
         print("="*70)
@@ -121,43 +111,18 @@ def main():
     # Initialize ensemble
     print("\n📦 Loading ensemble models...")
     
-    if args.skip_secondary:
-        print("⚠️  Skipping Secondary model (--skip-secondary flag)")
-        # Create a minimal ensemble without Secondary
-        print("  [1/2] Loading FSFM...")
-        from detectors.fsfm_unified_detector import FSFM_UnifiedDetector
-        fsfm = FSFM_UnifiedDetector(
-            checkpoint_path=args.fsfm_checkpoint,
-            mean_std_path=args.fsfm_mean_std,
-            device=args.device
-        )
-        
-        print("  [2/2] Loading ViT...")
-        from detectors.vit_detector import DeepFakeDetectorV2
-        vit = DeepFakeDetectorV2(
-            model_name=args.vit_model,
-            device=args.device
-        )
-        
-        print("\n⚠️  Running with 2 models only (FSFM + ViT)")
-        print("   For full optimization, remove --skip-secondary")
-        
-        # TODO: Add 2-model optimization mode
-        print("\n❌ 2-model mode not yet implemented.")
-        sys.exit(1)
-    
     ensemble = EnsembleDeepfakeDetector(
         fsfm_config={
             'checkpoint': args.fsfm_checkpoint,
             'mean_std': args.fsfm_mean_std,
             'device': args.device
         },
-        secondary_config={
-            'model_name': args.secondary_model,
+        organika_config={
+            'model_name': args.organika_model,
             'device': args.device
         },
-        vit_config={
-            'model_name': args.vit_model,
+        siglip_config={
+            'model_name': args.siglip_model,
             'device': args.device
         }
     )

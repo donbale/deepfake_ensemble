@@ -4,9 +4,9 @@ Ensemble Deepfake Detector - Individual Model Dashboard
 Shows each model's prediction separately to leverage their different specializations
 
 Models:
-1. FSFM-3C (Wolowolo) - 4-class ViT - Best for: Spoofing, advanced manipulations
-2. Secondary - ViT fine-tuned on deepfakes - Best for: General deepfake detection
-3. ViT-v2 (jacoballessio) - ViT-base - Best for: AI-generated images
+1. FSFM-3C (Wolowolo) - 4-class ViT - Best for: Face deepfakes, spoofing
+2. Organika (Swin Transformer) - Best for: AI-generated images (SDXL, DALL-E)
+3. SigLIP (Vision-Language) - Best for: General AI-generated detection
 """
 
 import torch
@@ -18,8 +18,8 @@ import sys
 
 # Import individual detectors
 from .fsfm_unified_detector import FSFM_UnifiedDetector
-from .secondary_detector import SecondaryDetector
-from .vit_detector import DeepFakeDetectorV2
+from .organika_detector import OrganikaDetector
+from .siglip_detector import SigLIPDetector
 
 
 class EnsembleDeepfakeDetector:
@@ -28,20 +28,20 @@ class EnsembleDeepfakeDetector:
     No voting/aggregation - shows each model's specialty
     """
 
-    def __init__(self, fsfm_config, secondary_config, vit_config):
+    def __init__(self, fsfm_config, organika_config, siglip_config):
         """
         Initialize ensemble detector
 
         Args:
             fsfm_config: Dict with 'checkpoint', 'mean_std', 'device'
-            secondary_config: Dict with 'model_name', 'device'
-            vit_config: Dict with 'model_name', 'cache_dir', 'device'
+            organika_config: Dict with 'model_name', 'device'
+            siglip_config: Dict with 'model_name', 'device'
         """
         print("\n" + "="*70)
         print("INITIALIZING ENSEMBLE DEEPFAKE DETECTOR")
         print("="*70)
 
-        # Initialize Model 1: FSFM-3C
+        # Initialize Model 1: FSFM-3C (ViT, face forensics)
         print("\n[1/3] Loading FSFM-3C Unified Detector...")
         self.fsfm = FSFM_UnifiedDetector(
             checkpoint_path=fsfm_config['checkpoint'],
@@ -49,19 +49,18 @@ class EnsembleDeepfakeDetector:
             device=fsfm_config.get('device', 'cuda')
         )
 
-        # Initialize Model 2: Secondary
-        print("\n[2/3] Loading Secondary Detector...")
-        self.secondary = SecondaryDetector(
-            model_name=secondary_config.get('model_name'),
-            device=secondary_config.get('device', 'cuda')
+        # Initialize Model 2: Organika (Swin, SDXL/diffusion detection)
+        print("\n[2/3] Loading Organika SDXL Detector...")
+        self.organika = OrganikaDetector(
+            model_name=organika_config.get('model_name'),
+            device=organika_config.get('device', 'cuda')
         )
 
-        # Initialize Model 3: ViT-v2
-        print("\n[3/3] Loading ViT-v2 Detector...")
-        self.vit = DeepFakeDetectorV2(
-            model_name=vit_config.get('model_name', 'prithivMLmods/Deep-Fake-Detector-v2-Model'),
-            cache_dir=vit_config.get('cache_dir', None),
-            device=vit_config.get('device', 'cuda')
+        # Initialize Model 3: SigLIP (Vision-Language, general AI detection)
+        print("\n[3/3] Loading SigLIP Detector...")
+        self.siglip = SigLIPDetector(
+            model_name=siglip_config.get('model_name'),
+            device=siglip_config.get('device', 'cuda')
         )
 
         print("\n" + "="*70)
@@ -84,49 +83,49 @@ class EnsembleDeepfakeDetector:
         print("  [1/3] FSFM-3C predicting...")
         fsfm_result = self.fsfm.predict(image_path, return_all_probs=True)
 
-        print("  [2/3] Secondary predicting...")
-        secondary_result = self.secondary.predict(image_path, return_all_probs=True)
+        print("  [2/3] Organika predicting...")
+        organika_result = self.organika.predict(image_path, return_all_probs=True)
 
-        print("  [3/3] ViT-v2 predicting...")
-        vit_result = self.vit.predict(image_path, return_all_probs=True)
+        print("  [3/3] SigLIP predicting...")
+        siglip_result = self.siglip.predict(image_path, return_all_probs=True)
 
-        # Use standardized is_fake from each model (handles any label format)
+        # Use standardized is_fake from each model
         fsfm_is_fake = fsfm_result['predicted_class'] != 0
-        secondary_is_fake = secondary_result.get('is_fake', 'fake' in secondary_result['predicted_label'].lower())
-        vit_is_fake = vit_result.get('is_fake', 'fake' in vit_result['predicted_label'].lower())
+        organika_is_fake = organika_result.get('is_fake', False)
+        siglip_is_fake = siglip_result.get('is_fake', False)
 
         # Build result showing each model's output
         result = {
             'models': {
                 'fsfm': {
-                    'name': 'FSFM-3C (4-class)',
+                    'name': 'FSFM-3C (ViT, 4-class)',
                     'prediction': fsfm_result['predicted_label'],
                     'confidence': fsfm_result['confidence'],
                     'is_fake': fsfm_is_fake,
                     'all_probabilities': fsfm_result.get('all_probabilities', {}),
-                    'specialty': 'Spoofing, Physical attacks, Advanced manipulations'
+                    'specialty': 'Face deepfakes, spoofing, physical attacks'
                 },
-                'secondary': {
-                    'name': 'Secondary (ViT fine-tuned)',
-                    'prediction': secondary_result['predicted_label'],
-                    'confidence': secondary_result['confidence'],
-                    'is_fake': secondary_is_fake,
-                    'fake_probability': secondary_result.get('fake_probability'),
-                    'all_probabilities': secondary_result.get('all_probabilities', {}),
-                    'specialty': 'General deepfake detection'
+                'organika': {
+                    'name': 'Organika (Swin, SDXL)',
+                    'prediction': organika_result['predicted_label'],
+                    'confidence': organika_result['confidence'],
+                    'is_fake': organika_is_fake,
+                    'fake_probability': organika_result.get('fake_probability'),
+                    'all_probabilities': organika_result.get('all_probabilities', {}),
+                    'specialty': 'AI-generated images (SDXL, DALL-E, Midjourney)'
                 },
-                'vit': {
-                    'name': 'ViT-v2 (Transformers)',
-                    'prediction': vit_result['predicted_label'],
-                    'confidence': vit_result['confidence'],
-                    'is_fake': vit_is_fake,
-                    'fake_probability': vit_result.get('fake_probability'),
-                    'all_probabilities': vit_result.get('all_probabilities', {}),
-                    'specialty': 'Traditional deepfakes, ChatGPT/Gemini generation'
+                'siglip': {
+                    'name': 'SigLIP (Vision-Language)',
+                    'prediction': siglip_result['predicted_label'],
+                    'confidence': siglip_result['confidence'],
+                    'is_fake': siglip_is_fake,
+                    'fake_probability': siglip_result.get('fake_probability'),
+                    'all_probabilities': siglip_result.get('all_probabilities', {}),
+                    'specialty': 'General AI-generated detection, digital forensics'
                 }
             },
             'summary': {
-                'models_detecting_fake': sum([fsfm_is_fake, secondary_is_fake, vit_is_fake]),
+                'models_detecting_fake': sum([fsfm_is_fake, organika_is_fake, siglip_is_fake]),
                 'total_models': 3,
                 'detected_by': []
             }
@@ -135,10 +134,10 @@ class EnsembleDeepfakeDetector:
         # Track which models detected fake
         if fsfm_is_fake:
             result['summary']['detected_by'].append('FSFM-3C')
-        if secondary_is_fake:
-            result['summary']['detected_by'].append('Secondary')
-        if vit_is_fake:
-            result['summary']['detected_by'].append('ViT-v2')
+        if organika_is_fake:
+            result['summary']['detected_by'].append('Organika')
+        if siglip_is_fake:
+            result['summary']['detected_by'].append('SigLIP')
 
         return result
 
@@ -149,14 +148,13 @@ class EnsembleDeepfakeDetector:
         
         Args:
             image_path: Path to image or PIL Image
-            weights: Optional dict of weights {'fsfm': w1, 'secondary': w2, 'vit': w3}
+            weights: Optional dict of weights {'fsfm': w1, 'organika': w2, 'siglip': w3}
                      If not provided, loads from weights_file
             weights_file: Path to JSON file with optimized weights
             
         Returns:
             Dictionary with weighted prediction and individual model outputs
         """
-        import os
         import json
         
         # Load weights from file if not provided
@@ -167,7 +165,7 @@ class EnsembleDeepfakeDetector:
                     weights = data.get('weights', {})
             else:
                 # Default to equal weights
-                weights = {'fsfm': 1/3, 'secondary': 1/3, 'vit': 1/3}
+                weights = {'fsfm': 1/3, 'organika': 1/3, 'siglip': 1/3}
         
         # Normalize weights to sum to 1
         total = sum(weights.values())
@@ -211,11 +209,12 @@ class EnsembleDeepfakeDetector:
         probs = {}
         
         for name, data in prediction_result['models'].items():
-            if data['is_fake']:
-                # If model says fake, use its confidence as fake probability
+            # Use standardized fake_probability if available
+            if 'fake_probability' in data and data['fake_probability'] is not None:
+                probs[name] = data['fake_probability']
+            elif data['is_fake']:
                 probs[name] = data['confidence']
             else:
-                # If model says real, fake probability is 1 - confidence
                 probs[name] = 1 - data['confidence']
         
         return probs
@@ -268,8 +267,8 @@ def print_ensemble_result(result):
         print(f"📊 CONFIDENCE: {model_data['confidence']*100:.2f}%")
         print(f"🎯 SPECIALTY: {model_data['specialty']}")
 
-        if 'preprocessing' in model_data:
-            print(f"🔧 PREPROCESSING: {model_data['preprocessing']}")
+        if 'fake_probability' in model_data and model_data['fake_probability'] is not None:
+            print(f"🔴 FAKE PROBABILITY: {model_data['fake_probability']*100:.2f}%")
 
         # Show all probabilities
         if model_data['all_probabilities']:
@@ -283,8 +282,8 @@ def print_ensemble_result(result):
     print("💡 INTERPRETATION GUIDE:")
     print("="*70)
     print("• FSFM-3C: Look for 'Deepfake', 'Diffusion', or 'Spoofing' classes")
-    print("• CemRoot: High accuracy (95%) with training_match preprocessing")
-    print("• ViT-v2: Strong at traditional deepfakes and ChatGPT images")
+    print("• Organika: Specialized in SDXL/DALL-E/Midjourney detection (98% acc)")
+    print("• SigLIP: General AI-generated image detection (vision-language model)")
     print("\n➡️  If ANY model detects fake with high confidence, investigate!")
     print("="*70 + "\n")
 
@@ -299,28 +298,20 @@ def main():
                         help='Path to input image')
 
     # FSFM-3C config
-    parser.add_argument('--fsfm_checkpoint', type=str,
-                        default='../models/fsfm/checkpoint-min_train_loss.pth',
-                        help='Path to FSFM checkpoint-min_train_loss.pth')
-    parser.add_argument('--fsfm_mean_std', type=str,
-                        default='../models/fsfm/pretrain_ds_mean_std.txt',
-                        help='Path to FSFM pretrain_ds_mean_std.txt')
+    parser.add_argument('--fsfm_checkpoint', type=str, default=None,
+                        help='Path to FSFM checkpoint (auto-downloads if not set)')
+    parser.add_argument('--fsfm_mean_std', type=str, default=None,
+                        help='Path to FSFM mean_std file (auto-downloads if not set)')
 
-    # CemRoot config
-    parser.add_argument('--cemroot_model', type=str,
-                        default='../models/cemroot/best_model_effatt.h5',
-                        help='Path to CemRoot best_model_effatt.h5')
-    parser.add_argument('--cemroot_method', type=str, default='training_match',
-                        choices=['training_match', 'simple_norm', 'efficientnet'],
-                        help='CemRoot preprocessing method')
+    # Organika config
+    parser.add_argument('--organika_model', type=str,
+                        default='Organika/sdxl-detector',
+                        help='Organika model name or path')
 
-    # ViT-v2 config
-    parser.add_argument('--vit_model', type=str,
-                        default='prithivMLmods/Deep-Fake-Detector-v2-Model',
-                        help='ViT model name or path')
-    parser.add_argument('--vit_cache_dir', type=str,
-                        default='../models/vit-v2',
-                        help='ViT cache directory')
+    # SigLIP config
+    parser.add_argument('--siglip_model', type=str,
+                        default='prithivMLmods/open-deepfake-detection',
+                        help='SigLIP model name or path')
 
     # Device config
     parser.add_argument('--device', type=str, default='cpu',
@@ -336,22 +327,18 @@ def main():
             'mean_std': args.fsfm_mean_std,
             'device': args.device
         },
-        cemroot_config={
-            'model_path': args.cemroot_model,
-            'image_size': 128
+        organika_config={
+            'model_name': args.organika_model,
+            'device': args.device
         },
-        vit_config={
-            'model_name': args.vit_model,
-            'cache_dir': args.vit_cache_dir,
+        siglip_config={
+            'model_name': args.siglip_model,
             'device': args.device
         }
     )
 
     # Run individual predictions
-    result = ensemble.predict(
-        args.image,
-        cemroot_method=args.cemroot_method
-    )
+    result = ensemble.predict(args.image)
 
     # Print results
     print_ensemble_result(result)
@@ -364,19 +351,11 @@ if __name__ == "__main__":
         print("="*70)
         print("\nShows each model's prediction separately (no voting/aggregation)")
         print("\nModels:")
-        print("  1. FSFM-3C - Best for: Spoofing, advanced manipulations")
-        print("  2. CemRoot - Best for: Diffusion models, AIGC")
-        print("  3. ViT-v2  - Best for: Traditional deepfakes, ChatGPT")
+        print("  1. FSFM-3C  - Best for: Face deepfakes, spoofing")
+        print("  2. Organika - Best for: AI-generated images (SDXL, DALL-E)")
+        print("  3. SigLIP   - Best for: General AI-generated detection")
         print("\nUsage:")
         print("  python ensemble_detector.py --image <path_to_image>")
-        print("\nExample:")
-        print("  python ensemble_detector.py --image test.jpg")
         print("\n" + "="*70)
-        print("\nWhy individual outputs?")
-        print("  • Different models catch different generation methods")
-        print("  • Voting can hide important detections")
-        print("  • See which model's specialty matches the image")
-        print("  • ANY high-confidence fake detection is valuable!")
-        print("="*70 + "\n")
     else:
         main()

@@ -142,10 +142,10 @@ def main():
     parser.add_argument('--device', type=str, default='cpu',
                         choices=['cuda', 'cpu'],
                         help='Device for inference')
-    parser.add_argument('--secondary_model', type=str,
-                        default='buildborderless/CommunityForensics-DeepfakeDet-ViT')
-    parser.add_argument('--vit_model', type=str,
-                        default='jacoballessio/ai-image-detect-distilled')
+    parser.add_argument('--organika_model', type=str,
+                        default='Organika/sdxl-detector')
+    parser.add_argument('--siglip_model', type=str,
+                        default='prithivMLmods/open-deepfake-detection')
     
     args = parser.parse_args()
     
@@ -160,18 +160,18 @@ def main():
     from detectors.fsfm_unified_detector import FSFM_UnifiedDetector
     fsfm = FSFM_UnifiedDetector(device=args.device)
     
-    print("\n  [2/3] Secondary...")
-    from detectors.secondary_detector import SecondaryDetector
-    secondary = SecondaryDetector(model_name=args.secondary_model, device=args.device)
+    print("\n  [2/3] Organika...")
+    from detectors.organika_detector import OrganikaDetector
+    organika = OrganikaDetector(model_name=args.organika_model, device=args.device)
     
-    print("\n  [3/3] ViT...")
-    from detectors.vit_detector import DeepFakeDetectorV2
-    vit = DeepFakeDetectorV2(model_name=args.vit_model, device=args.device)
+    print("\n  [3/3] SigLIP...")
+    from detectors.siglip_detector import SigLIPDetector
+    siglip = SigLIPDetector(model_name=args.siglip_model, device=args.device)
     
     models = {
         'FSFM': fsfm,
-        'Secondary': secondary,
-        'ViT': vit,
+        'Organika': organika,
+        'SigLIP': siglip,
     }
     
     # ── Test on each dataset ──

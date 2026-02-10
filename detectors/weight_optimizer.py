@@ -467,8 +467,8 @@ def run_optimization(ensemble_detector,
     
     predictions = {
         'fsfm': [],
-        'secondary': [],
-        'vit': []
+        'organika': [],
+        'siglip': []
     }
     
     for i, img_path in enumerate(all_image_paths):
