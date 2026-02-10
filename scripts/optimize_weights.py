@@ -6,7 +6,8 @@ Finds optimal weights for combining FSFM, Secondary, and ViT predictions
 using either Grid Search or Bayesian Optimization.
 
 Usage:
-    python scripts/optimize_weights.py --dataset ./data/validation --method bayesian
+    python scripts/optimize_weights.py --dataset ./data1 ./data2 ./data3 --method bayesian
+    python scripts/optimize_weights.py --dataset ./data --max-samples 2000
 """
 
 # IMPORTANT: Set these BEFORE importing TensorFlow to avoid PyTorch/TF CUDA conflicts
@@ -29,8 +30,8 @@ def main():
     parser = argparse.ArgumentParser(
         description='Optimize ensemble weights for deepfake detection'
     )
-    parser.add_argument('--dataset', type=str, required=True,
-                        help='Path to validation dataset (with real/ and fake/ subdirs)')
+    parser.add_argument('--dataset', type=str, nargs='+', required=True,
+                        help='Path(s) to dataset(s) with real/ and fake/ subdirs')
     parser.add_argument('--method', type=str, default='bayesian',
                         choices=['grid', 'bayesian'],
                         help='Optimization method (default: bayesian)')
@@ -39,7 +40,7 @@ def main():
     parser.add_argument('--output', type=str, default='optimal_weights.json',
                         help='Output path for weights (default: optimal_weights.json)')
     parser.add_argument('--max-samples', type=int, default=2000,
-                        help='Max images to process (default: 2000, use 0 for all)')
+                        help='Max images PER DATASET (default: 2000, use 0 for all)')
     
     # Model paths
     parser.add_argument('--fsfm_checkpoint', type=str,
@@ -68,17 +69,25 @@ def main():
     print("🔧 ENSEMBLE WEIGHT OPTIMIZATION")
     print("="*70)
     
-    # Validate dataset
-    if not os.path.exists(args.dataset):
-        print(f"❌ Dataset not found: {args.dataset}")
-        sys.exit(1)
+    # Validate datasets
+    valid_datasets = []
+    for ds_path in args.dataset:
+        if not os.path.exists(ds_path):
+            print(f"❌ Dataset not found: {ds_path}")
+            sys.exit(1)
+        
+        real_dir = os.path.join(ds_path, 'real')
+        fake_dir = os.path.join(ds_path, 'fake')
+        
+        if not os.path.exists(real_dir) or not os.path.exists(fake_dir):
+            print(f"❌ Dataset must have 'real/' and 'fake/' subdirectories: {ds_path}")
+            sys.exit(1)
+        
+        valid_datasets.append(ds_path)
     
-    real_dir = os.path.join(args.dataset, 'real')
-    fake_dir = os.path.join(args.dataset, 'fake')
-    
-    if not os.path.exists(real_dir) or not os.path.exists(fake_dir):
-        print("❌ Dataset must have 'real/' and 'fake/' subdirectories")
-        sys.exit(1)
+    print(f"\n📂 {len(valid_datasets)} dataset(s) to optimize across")
+    for ds in valid_datasets:
+        print(f"   • {ds}")
     
     # Debug mode: test each import separately
     if args.debug:
@@ -157,7 +166,7 @@ def main():
     max_samples = args.max_samples if args.max_samples > 0 else None
     result = run_optimization(
         ensemble_detector=ensemble,
-        dataset_path=args.dataset,
+        dataset_path=valid_datasets,
         method=args.method,
         n_trials=args.trials,
         max_samples=max_samples,

@@ -364,8 +364,46 @@ class ValidationDataLoader:
         }
 
 
+def _load_and_sample_dataset(dataset_path: str, max_samples: int = None):
+    """
+    Load a single dataset and optionally sample from it (stratified).
+    
+    Returns:
+        Tuple of (image_paths, labels, summary_dict)
+    """
+    import random
+    
+    loader = ValidationDataLoader(dataset_path)
+    summary = loader.summary()
+    image_paths, labels = loader.load()
+    
+    if max_samples and max_samples < len(image_paths):
+        # Stratified sampling to maintain class balance
+        real_indices = [i for i, l in enumerate(labels) if l == 0]
+        fake_indices = [i for i, l in enumerate(labels) if l == 1]
+        
+        n_real = min(len(real_indices), max_samples // 2)
+        n_fake = min(len(fake_indices), max_samples - n_real)
+        
+        random.shuffle(real_indices)
+        random.shuffle(fake_indices)
+        sampled_indices = real_indices[:n_real] + fake_indices[:n_fake]
+        random.shuffle(sampled_indices)
+        
+        image_paths = [image_paths[i] for i in sampled_indices]
+        labels = [labels[i] for i in sampled_indices]
+        
+        summary['sampled'] = True
+        summary['sampled_real'] = n_real
+        summary['sampled_fake'] = n_fake
+    else:
+        summary['sampled'] = False
+    
+    return image_paths, labels, summary
+
+
 def run_optimization(ensemble_detector,
-                     dataset_path: str,
+                     dataset_path,
                      method: str = 'bayesian',
                      n_trials: int = 100,
                      max_samples: int = None,
@@ -375,10 +413,10 @@ def run_optimization(ensemble_detector,
     
     Args:
         ensemble_detector: Initialized EnsembleDeepfakeDetector
-        dataset_path: Path to validation dataset
+        dataset_path: Path to validation dataset (str) or list of paths for multi-dataset
         method: 'grid' or 'bayesian'
         n_trials: Number of trials for bayesian optimization
-        max_samples: Maximum number of images to process (None = all)
+        max_samples: Max images per dataset (None = all). Applied to EACH dataset separately.
         output_path: Where to save weights
         
     Returns:
@@ -388,43 +426,41 @@ def run_optimization(ensemble_detector,
     print("🔧 ENSEMBLE WEIGHT OPTIMIZATION")
     print("="*70)
     
-    # Load dataset
-    loader = ValidationDataLoader(dataset_path)
-    summary = loader.summary()
+    # Normalize to list of dataset paths
+    if isinstance(dataset_path, str):
+        dataset_paths = [dataset_path]
+    else:
+        dataset_paths = list(dataset_path)
     
-    print(f"\n📁 Dataset: {dataset_path}")
-    print(f"   Real images: {summary['real_count']}")
-    print(f"   Fake images: {summary['fake_count']}")
-    print(f"   Total: {summary['total_images']}")
+    # Load (and sample) from each dataset
+    all_image_paths = []
+    all_labels = []
     
-    if summary['total_images'] == 0:
-        raise ValueError("No images found in dataset")
+    for idx, ds_path in enumerate(dataset_paths, 1):
+        ds_name = os.path.basename(ds_path.rstrip('/\\'))
+        print(f"\n📁 Dataset {idx}/{len(dataset_paths)}: {ds_name}")
+        print(f"   Path: {ds_path}")
+        
+        paths, labels, summary = _load_and_sample_dataset(ds_path, max_samples)
+        
+        print(f"   Total: {summary['total_images']} ({summary['real_count']} real, {summary['fake_count']} fake)")
+        
+        if summary['total_images'] == 0:
+            print(f"   ⚠️  No images found, skipping!")
+            continue
+        
+        if summary['sampled']:
+            print(f"   🎲 Sampled: {summary['sampled_real']} real + {summary['sampled_fake']} fake = {len(paths)}")
+        
+        all_image_paths.extend(paths)
+        all_labels.extend(labels)
     
-    image_paths, labels = loader.load()
+    total_real = all_labels.count(0)
+    total_fake = all_labels.count(1)
+    print(f"\n📊 Combined: {len(all_image_paths)} images ({total_real} real, {total_fake} fake) from {len(dataset_paths)} dataset(s)")
     
-    # Sample if max_samples specified
-    if max_samples and max_samples < len(image_paths):
-        import random
-        print(f"\n🎲 Sampling {max_samples} images (stratified)...")
-        
-        # Stratified sampling to maintain class balance
-        real_indices = [i for i, l in enumerate(labels) if l == 0]
-        fake_indices = [i for i, l in enumerate(labels) if l == 1]
-        
-        # Calculate samples per class
-        n_real = min(len(real_indices), max_samples // 2)
-        n_fake = min(len(fake_indices), max_samples - n_real)
-        
-        # Random sample from each class
-        random.shuffle(real_indices)
-        random.shuffle(fake_indices)
-        sampled_indices = real_indices[:n_real] + fake_indices[:n_fake]
-        random.shuffle(sampled_indices)  # Mix them up
-        
-        image_paths = [image_paths[i] for i in sampled_indices]
-        labels = [labels[i] for i in sampled_indices]
-        
-        print(f"   Sampled: {n_real} real + {n_fake} fake = {len(image_paths)} total")
+    if len(all_image_paths) == 0:
+        raise ValueError("No images found across any dataset")
     
     # Get predictions from each model
     print(f"\n🔍 Getting predictions from all models...")
@@ -435,9 +471,9 @@ def run_optimization(ensemble_detector,
         'vit': []
     }
     
-    for i, img_path in enumerate(image_paths):
+    for i, img_path in enumerate(all_image_paths):
         if (i + 1) % 10 == 0:
-            print(f"   Processing {i + 1}/{len(image_paths)}...")
+            print(f"   Processing {i + 1}/{len(all_image_paths)}...")
         
         result = ensemble_detector.predict(img_path)
         
@@ -458,10 +494,10 @@ def run_optimization(ensemble_detector,
     
     if method == 'grid':
         print(f"\n⏳ Running grid search...")
-        result = optimizer.grid_search(predictions, labels, step=0.05)
+        result = optimizer.grid_search(predictions, all_labels, step=0.05)
     else:
         print(f"\n⏳ Running Bayesian optimization ({n_trials} trials)...")
-        result = optimizer.bayesian_optimize(predictions, labels, n_trials=n_trials)
+        result = optimizer.bayesian_optimize(predictions, all_labels, n_trials=n_trials)
     
     # Print results
     print("\n" + "="*70)
@@ -481,6 +517,7 @@ def run_optimization(ensemble_detector,
     print(f"\n⏱️  Optimization Time: {result.timing_seconds:.2f}s")
     print(f"   Trials Evaluated: {result.n_trials}")
     print(f"   Method: {result.method}")
+    print(f"   Datasets: {len(dataset_paths)}")
     
     # Save weights
     saved_path = optimizer.save_weights(result.weights, output_path)
