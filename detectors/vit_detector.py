@@ -79,6 +79,39 @@ class DeepFakeDetectorV2:
         # Get class labels from config
         self.class_labels = self.model.config.id2label
         print(f"Classes: {self.class_labels}")
+        
+        # Determine which class index means "fake"
+        self.fake_class_idx = self._detect_fake_class()
+
+    def _detect_fake_class(self):
+        """
+        Detect which class index corresponds to 'fake/AI-generated'.
+        """
+        labels_lower = {k: v.lower() for k, v in self.class_labels.items()}
+        
+        fake_keywords = ['fake', 'ai', 'deepfake', 'synthetic', 'generated', 'manipulated']
+        real_keywords = ['real', 'human', 'authentic', 'original', 'genuine', 'nature']
+        
+        fake_idx = None
+        real_idx = None
+        
+        for idx, label in labels_lower.items():
+            if any(kw in label for kw in fake_keywords):
+                fake_idx = idx
+            if any(kw in label for kw in real_keywords):
+                real_idx = idx
+        
+        if fake_idx is not None:
+            print(f"   → Fake class: idx={fake_idx} ('{self.class_labels[fake_idx]}')")
+            return fake_idx
+        
+        if real_idx is not None:
+            other_idx = 1 - real_idx
+            print(f"   → Fake class: idx={other_idx} (inferred from real='{self.class_labels[real_idx]}')")
+            return other_idx
+        
+        print(f"   ⚠️  Unknown labels, assuming class 1 = fake (convention)")
+        return 1
 
     def preprocess_image(self, image_path):
         """Preprocess image for model input"""
@@ -111,12 +144,18 @@ class DeepFakeDetectorV2:
         predicted_class = torch.argmax(logits, dim=1).item()
         confidence = probs[predicted_class].item()
         label = self.class_labels[predicted_class]
+        
+        # Standardized fake probability
+        fake_prob = probs[self.fake_class_idx].item()
+        is_fake = (predicted_class == self.fake_class_idx)
 
         # Build result
         result = {
             'predicted_class': predicted_class,
             'predicted_label': label,
             'confidence': confidence,
+            'is_fake': is_fake,
+            'fake_probability': fake_prob,
         }
 
         if return_all_probs:

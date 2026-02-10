@@ -480,8 +480,10 @@ def run_optimization(ensemble_detector,
         # Extract fake probability from each model
         for model_name in predictions.keys():
             model_data = result['models'][model_name]
-            # Use confidence if fake, 1-confidence if real
-            if model_data['is_fake']:
+            # Use standardized fake_probability if available
+            if 'fake_probability' in model_data:
+                fake_prob = model_data['fake_probability']
+            elif model_data['is_fake']:
                 fake_prob = model_data['confidence']
             else:
                 fake_prob = 1 - model_data['confidence']

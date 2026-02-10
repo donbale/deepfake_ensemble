@@ -90,10 +90,10 @@ class EnsembleDeepfakeDetector:
         print("  [3/3] ViT-v2 predicting...")
         vit_result = self.vit.predict(image_path, return_all_probs=True)
 
-        # Normalize to binary (Real vs Fake) for summary
+        # Use standardized is_fake from each model (handles any label format)
         fsfm_is_fake = fsfm_result['predicted_class'] != 0
-        secondary_is_fake = 'fake' in secondary_result['predicted_label'].lower()
-        vit_is_fake = 'fake' in vit_result['predicted_label'].lower() or 'Deepfake' in vit_result['predicted_label']
+        secondary_is_fake = secondary_result.get('is_fake', 'fake' in secondary_result['predicted_label'].lower())
+        vit_is_fake = vit_result.get('is_fake', 'fake' in vit_result['predicted_label'].lower())
 
         # Build result showing each model's output
         result = {
@@ -111,6 +111,7 @@ class EnsembleDeepfakeDetector:
                     'prediction': secondary_result['predicted_label'],
                     'confidence': secondary_result['confidence'],
                     'is_fake': secondary_is_fake,
+                    'fake_probability': secondary_result.get('fake_probability'),
                     'all_probabilities': secondary_result.get('all_probabilities', {}),
                     'specialty': 'General deepfake detection'
                 },
@@ -119,6 +120,7 @@ class EnsembleDeepfakeDetector:
                     'prediction': vit_result['predicted_label'],
                     'confidence': vit_result['confidence'],
                     'is_fake': vit_is_fake,
+                    'fake_probability': vit_result.get('fake_probability'),
                     'all_probabilities': vit_result.get('all_probabilities', {}),
                     'specialty': 'Traditional deepfakes, ChatGPT/Gemini generation'
                 }
