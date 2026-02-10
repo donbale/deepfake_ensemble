@@ -53,7 +53,7 @@ class WeightOptimizer:
         Args:
             model_names: Names of models in ensemble
         """
-        self.model_names = model_names or ['fsfm', 'secondary', 'vit']
+        self.model_names = model_names or ['fsfm', 'organika', 'siglip']
         self.weights_file = "optimal_weights.json"
     
     def grid_search(self, 
@@ -492,7 +492,7 @@ def run_optimization(ensemble_detector,
     print("   ✓ All predictions collected")
     
     # Run optimization
-    optimizer = WeightOptimizer()
+    optimizer = WeightOptimizer(model_names=list(predictions.keys()))
     
     if method == 'grid':
         print(f"\n⏳ Running grid search...")
