@@ -146,6 +146,8 @@ def main():
                         default='Organika/sdxl-detector')
     parser.add_argument('--siglip_model', type=str,
                         default='prithivMLmods/open-deepfake-detection')
+    parser.add_argument('--predictor_path', type=str, default=None,
+                        help='Path to dlib shape_predictor_68_face_landmarks.dat')
     
     args = parser.parse_args()
     
@@ -156,22 +158,27 @@ def main():
     # ── Load models individually ──
     print("\n📦 Loading models...")
     
-    print("\n  [1/3] FSFM-3C...")
+    print("\n  [1/4] FSFM-3C...")
     from detectors.fsfm_unified_detector import FSFM_UnifiedDetector
     fsfm = FSFM_UnifiedDetector(device=args.device)
     
-    print("\n  [2/3] Organika...")
+    print("\n  [2/4] Organika...")
     from detectors.organika_detector import OrganikaDetector
     organika = OrganikaDetector(model_name=args.organika_model, device=args.device)
     
-    print("\n  [3/3] SigLIP...")
+    print("\n  [3/4] SigLIP...")
     from detectors.siglip_detector import SigLIPDetector
     siglip = SigLIPDetector(model_name=args.siglip_model, device=args.device)
+    
+    print("\n  [4/4] Face Forensics...")
+    from detectors.face_forensics_detector import FaceForensicsAnalyzer
+    forensics = FaceForensicsAnalyzer(predictor_path=args.predictor_path, device=args.device)
     
     models = {
         'FSFM': fsfm,
         'Organika': organika,
         'SigLIP': siglip,
+        'Forensics': forensics,
     }
     
     # ── Test on each dataset ──

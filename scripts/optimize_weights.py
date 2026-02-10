@@ -2,7 +2,7 @@
 """
 CLI Script for Optimizing Ensemble Weights
 
-Finds optimal weights for combining FSFM, Organika, and SigLIP predictions
+Finds optimal weights for combining FSFM, Organika, SigLIP, and Face Forensics predictions
 using either Grid Search or Bayesian Optimization.
 
 Usage:
@@ -53,6 +53,8 @@ def main():
     parser.add_argument('--siglip_model', type=str,
                         default='prithivMLmods/open-deepfake-detection',
                         help='SigLIP model (HuggingFace repo ID)')
+    parser.add_argument('--predictor_path', type=str, default=None,
+                        help='Path to dlib shape_predictor_68_face_landmarks.dat')
     parser.add_argument('--device', type=str, default='cpu',
                         choices=['cuda', 'cpu'],
                         help='Device for inference')
@@ -89,21 +91,25 @@ def main():
     if args.debug:
         print("\n🔍 DEBUG MODE: Testing imports one by one...")
         
-        print("  [1/4] Testing PyTorch...")
+        print("  [1/5] Testing PyTorch...")
         import torch
         print(f"        ✓ PyTorch {torch.__version__}")
         
-        print("  [2/4] Testing FSFM detector...")
+        print("  [2/5] Testing FSFM detector...")
         from detectors.fsfm_unified_detector import FSFM_UnifiedDetector
         print("        ✓ FSFM imported")
         
-        print("  [3/4] Testing Organika detector...")
+        print("  [3/5] Testing Organika detector...")
         from detectors.organika_detector import OrganikaDetector
         print("        ✓ Organika imported")
         
-        print("  [4/4] Testing SigLIP detector...")
+        print("  [4/5] Testing SigLIP detector...")
         from detectors.siglip_detector import SigLIPDetector
         print("        ✓ SigLIP imported")
+        
+        print("  [5/5] Testing Face Forensics analyzer...")
+        from detectors.face_forensics_detector import FaceForensicsAnalyzer
+        print("        ✓ Face Forensics imported")
         
         print("\n✓ All imports successful!")
         print("="*70)
@@ -123,6 +129,10 @@ def main():
         },
         siglip_config={
             'model_name': args.siglip_model,
+            'device': args.device
+        },
+        forensics_config={
+            'predictor_path': args.predictor_path,
             'device': args.device
         }
     )

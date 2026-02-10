@@ -53,7 +53,7 @@ class WeightOptimizer:
         Args:
             model_names: Names of models in ensemble
         """
-        self.model_names = model_names or ['fsfm', 'organika', 'siglip']
+        self.model_names = model_names or ['fsfm', 'organika', 'siglip', 'forensics']
         self.weights_file = "optimal_weights.json"
     
     def grid_search(self, 
@@ -80,27 +80,33 @@ class WeightOptimizer:
         best_weights = None
         n_trials = 0
         
-        # Triple nested loop for 3 models
-        for w1 in weights_list:
-            for w2 in weights_list:
-                w3 = 1 - w1 - w2
-                
-                # Skip invalid combinations
-                if w3 < 0 or w3 > 1:
-                    continue
-                
+        # Recursive weight generation for N models
+        def generate_weights(remaining_names, remaining_budget, current_weights):
+            nonlocal best_accuracy, best_weights, n_trials
+            
+            if len(remaining_names) == 1:
+                # Last model gets whatever is left
+                w = round(remaining_budget, 6)
+                if w < 0 or w > 1:
+                    return
+                current_weights[remaining_names[0]] = w
                 n_trials += 1
-                weights = {
-                    self.model_names[0]: w1,
-                    self.model_names[1]: w2,
-                    self.model_names[2]: w3
-                }
-                
-                accuracy = self._evaluate_weights(predictions, labels, weights)
-                
+                accuracy = self._evaluate_weights(predictions, labels, current_weights)
                 if accuracy > best_accuracy:
                     best_accuracy = accuracy
-                    best_weights = weights.copy()
+                    best_weights = current_weights.copy()
+                return
+            
+            name = remaining_names[0]
+            for w in weights_list:
+                if w > remaining_budget + 1e-9:
+                    break
+                current_weights[name] = w
+                generate_weights(remaining_names[1:], remaining_budget - w, current_weights)
+        
+        generate_weights(list(self.model_names), 1.0, {})
+                
+
         
         elapsed = time.time() - start_time
         
@@ -144,16 +150,14 @@ class WeightOptimizer:
         start_time = time.time()
         
         def objective(trial):
-            # Sample weights
-            w1 = trial.suggest_float(self.model_names[0], 0.0, 1.0)
-            w2 = trial.suggest_float(self.model_names[1], 0.0, 1.0 - w1)
-            w3 = 1.0 - w1 - w2
-            
-            weights = {
-                self.model_names[0]: w1,
-                self.model_names[1]: w2,
-                self.model_names[2]: w3
-            }
+            # Sample weights for N-1 models, last gets remainder
+            weights = {}
+            remaining = 1.0
+            for name in self.model_names[:-1]:
+                w = trial.suggest_float(name, 0.0, remaining)
+                weights[name] = w
+                remaining -= w
+            weights[self.model_names[-1]] = max(0.0, remaining)
             
             return self._evaluate_weights(predictions, labels, weights)
         
@@ -178,15 +182,13 @@ class WeightOptimizer:
         
         # Extract best weights
         best_params = study.best_params
-        w1 = best_params[self.model_names[0]]
-        w2 = best_params[self.model_names[1]]
-        w3 = 1.0 - w1 - w2
-        
-        best_weights = {
-            self.model_names[0]: w1,
-            self.model_names[1]: w2,
-            self.model_names[2]: w3
-        }
+        best_weights = {}
+        remaining = 1.0
+        for name in self.model_names[:-1]:
+            w = best_params[name]
+            best_weights[name] = w
+            remaining -= w
+        best_weights[self.model_names[-1]] = max(0.0, remaining)
         
         per_model_acc = self._per_model_accuracy(predictions, labels)
         
@@ -468,7 +470,8 @@ def run_optimization(ensemble_detector,
     predictions = {
         'fsfm': [],
         'organika': [],
-        'siglip': []
+        'siglip': [],
+        'forensics': []
     }
     
     for i, img_path in enumerate(all_image_paths):

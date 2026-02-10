@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Ensemble Deepfake Detector - Individual Model Dashboard
-Shows each model's prediction separately to leverage their different specializations
+Ensemble Deepfake Detector - 4-Model Architecture
 
 Models:
-1. FSFM-3C (Wolowolo) - 4-class ViT - Best for: Face deepfakes, spoofing
-2. Organika (Swin Transformer) - Best for: AI-generated images (SDXL, DALL-E)
-3. SigLIP (Vision-Language) - Best for: General AI-generated detection
+1. FSFM-3C (Wolowolo)       - ViT, 4-class    - Face deepfakes, spoofing
+2. Organika (Swin)           - Swin Transformer - AI-generated images (SDXL, DALL-E)
+3. SigLIP (Vision-Language)  - SigLIP2          - General AI-generated detection
+4. Face Forensics (Math)     - Signal Processing - FFT, landmarks, symmetry, texture, edges
 """
 
 import torch
@@ -20,6 +20,7 @@ import sys
 from .fsfm_unified_detector import FSFM_UnifiedDetector
 from .organika_detector import OrganikaDetector
 from .siglip_detector import SigLIPDetector
+from .face_forensics_detector import FaceForensicsAnalyzer
 
 
 class EnsembleDeepfakeDetector:
@@ -28,7 +29,7 @@ class EnsembleDeepfakeDetector:
     No voting/aggregation - shows each model's specialty
     """
 
-    def __init__(self, fsfm_config, organika_config, siglip_config):
+    def __init__(self, fsfm_config, organika_config, siglip_config, forensics_config=None):
         """
         Initialize ensemble detector
 
@@ -36,13 +37,14 @@ class EnsembleDeepfakeDetector:
             fsfm_config: Dict with 'checkpoint', 'mean_std', 'device'
             organika_config: Dict with 'model_name', 'device'
             siglip_config: Dict with 'model_name', 'device'
+            forensics_config: Optional dict with 'predictor_path', 'device'
         """
         print("\n" + "="*70)
         print("INITIALIZING ENSEMBLE DEEPFAKE DETECTOR")
         print("="*70)
 
         # Initialize Model 1: FSFM-3C (ViT, face forensics)
-        print("\n[1/3] Loading FSFM-3C Unified Detector...")
+        print("\n[1/4] Loading FSFM-3C Unified Detector...")
         self.fsfm = FSFM_UnifiedDetector(
             checkpoint_path=fsfm_config['checkpoint'],
             mean_std_path=fsfm_config['mean_std'],
@@ -50,49 +52,61 @@ class EnsembleDeepfakeDetector:
         )
 
         # Initialize Model 2: Organika (Swin, SDXL/diffusion detection)
-        print("\n[2/3] Loading Organika SDXL Detector...")
+        print("\n[2/4] Loading Organika SDXL Detector...")
         self.organika = OrganikaDetector(
             model_name=organika_config.get('model_name'),
             device=organika_config.get('device', 'cuda')
         )
 
         # Initialize Model 3: SigLIP (Vision-Language, general AI detection)
-        print("\n[3/3] Loading SigLIP Detector...")
+        print("\n[3/4] Loading SigLIP Detector...")
         self.siglip = SigLIPDetector(
             model_name=siglip_config.get('model_name'),
             device=siglip_config.get('device', 'cuda')
         )
 
+        # Initialize Model 4: Face Forensics Analyzer (math-based)
+        print("\n[4/4] Loading Face Forensics Analyzer...")
+        forensics_config = forensics_config or {}
+        self.forensics = FaceForensicsAnalyzer(
+            predictor_path=forensics_config.get('predictor_path'),
+            device=forensics_config.get('device', 'cpu')
+        )
+
         print("\n" + "="*70)
-        print("✓ ALL MODELS LOADED SUCCESSFULLY!")
+        print("✓ ALL 4 MODELS LOADED SUCCESSFULLY!")
         print("="*70 + "\n")
 
     def predict(self, image_path):
         """
-        Get predictions from all 3 models individually
+        Get predictions from all 4 models individually
 
         Args:
             image_path: Path to image or PIL Image
 
         Returns:
-            Dictionary with individual model predictions (no aggregation)
+            Dictionary with individual model predictions
         """
         print(f"\n🔍 Running individual model predictions on: {image_path}")
 
         # Get predictions from all models
-        print("  [1/3] FSFM-3C predicting...")
+        print("  [1/4] FSFM-3C predicting...")
         fsfm_result = self.fsfm.predict(image_path, return_all_probs=True)
 
-        print("  [2/3] Organika predicting...")
+        print("  [2/4] Organika predicting...")
         organika_result = self.organika.predict(image_path, return_all_probs=True)
 
-        print("  [3/3] SigLIP predicting...")
+        print("  [3/4] SigLIP predicting...")
         siglip_result = self.siglip.predict(image_path, return_all_probs=True)
+
+        print("  [4/4] Face Forensics analyzing...")
+        forensics_result = self.forensics.predict(image_path, return_all_probs=True)
 
         # Use standardized is_fake from each model
         fsfm_is_fake = fsfm_result['predicted_class'] != 0
         organika_is_fake = organika_result.get('is_fake', False)
         siglip_is_fake = siglip_result.get('is_fake', False)
+        forensics_is_fake = forensics_result.get('is_fake', False)
 
         # Build result showing each model's output
         result = {
@@ -122,11 +136,22 @@ class EnsembleDeepfakeDetector:
                     'fake_probability': siglip_result.get('fake_probability'),
                     'all_probabilities': siglip_result.get('all_probabilities', {}),
                     'specialty': 'General AI-generated detection, digital forensics'
+                },
+                'forensics': {
+                    'name': 'Face Forensics (Math)',
+                    'prediction': forensics_result['predicted_label'],
+                    'confidence': forensics_result['confidence'],
+                    'is_fake': forensics_is_fake,
+                    'fake_probability': forensics_result.get('fake_probability'),
+                    'all_probabilities': forensics_result.get('all_probabilities', {}),
+                    'sub_scores': forensics_result.get('sub_scores', {}),
+                    'specialty': 'FFT frequency, landmarks, symmetry, texture, edges'
                 }
             },
             'summary': {
-                'models_detecting_fake': sum([fsfm_is_fake, organika_is_fake, siglip_is_fake]),
-                'total_models': 3,
+                'models_detecting_fake': sum([fsfm_is_fake, organika_is_fake,
+                                              siglip_is_fake, forensics_is_fake]),
+                'total_models': 4,
                 'detected_by': []
             }
         }
@@ -138,6 +163,8 @@ class EnsembleDeepfakeDetector:
             result['summary']['detected_by'].append('Organika')
         if siglip_is_fake:
             result['summary']['detected_by'].append('SigLIP')
+        if forensics_is_fake:
+            result['summary']['detected_by'].append('Forensics')
 
         return result
 
@@ -148,7 +175,7 @@ class EnsembleDeepfakeDetector:
         
         Args:
             image_path: Path to image or PIL Image
-            weights: Optional dict of weights {'fsfm': w1, 'organika': w2, 'siglip': w3}
+            weights: Optional dict of weights {'fsfm': w1, 'organika': w2, 'siglip': w3, 'forensics': w4}
                      If not provided, loads from weights_file
             weights_file: Path to JSON file with optimized weights
             
@@ -165,7 +192,7 @@ class EnsembleDeepfakeDetector:
                     weights = data.get('weights', {})
             else:
                 # Default to equal weights
-                weights = {'fsfm': 1/3, 'organika': 1/3, 'siglip': 1/3}
+                weights = {'fsfm': 0.25, 'organika': 0.25, 'siglip': 0.25, 'forensics': 0.25}
         
         # Normalize weights to sum to 1
         total = sum(weights.values())
@@ -179,7 +206,7 @@ class EnsembleDeepfakeDetector:
         fake_probs = self.get_fake_probabilities(result)
         
         weighted_score = sum(
-            weights.get(name, 1/3) * prob 
+            weights.get(name, 0.25) * prob 
             for name, prob in fake_probs.items()
         )
         
@@ -188,7 +215,7 @@ class EnsembleDeepfakeDetector:
             'weights_used': weights,
             'weighted_score': weighted_score,
             'is_fake': weighted_score >= 0.5,
-            'confidence': abs(weighted_score - 0.5) * 2,  # Distance from threshold
+            'confidence': abs(weighted_score - 0.5) * 2,
             'interpretation': self._interpret_weighted_score(weighted_score)
         }
         
@@ -234,7 +261,7 @@ class EnsembleDeepfakeDetector:
 def print_ensemble_result(result):
     """Pretty print individual model results"""
     print("\n" + "="*70)
-    print("🎯 ENSEMBLE DEEPFAKE DETECTION - INDIVIDUAL MODEL OUTPUTS")
+    print("🎯 ENSEMBLE DEEPFAKE DETECTION - 4-MODEL ANALYSIS")
     print("="*70)
 
     # Summary
@@ -270,6 +297,13 @@ def print_ensemble_result(result):
         if 'fake_probability' in model_data and model_data['fake_probability'] is not None:
             print(f"🔴 FAKE PROBABILITY: {model_data['fake_probability']*100:.2f}%")
 
+        # Show sub-scores for forensics model
+        if 'sub_scores' in model_data and model_data['sub_scores']:
+            print(f"\n📐 FORENSIC SUB-SCORES:")
+            for name, score in model_data['sub_scores'].items():
+                bar = "█" * int(score * 30) + "░" * (30 - int(score * 30))
+                print(f"  {name:12s} {bar} {score*100:.1f}%")
+
         # Show all probabilities
         if model_data['all_probabilities']:
             print(f"\n📈 CLASS PROBABILITIES:")
@@ -281,16 +315,17 @@ def print_ensemble_result(result):
     print("\n" + "="*70)
     print("💡 INTERPRETATION GUIDE:")
     print("="*70)
-    print("• FSFM-3C: Look for 'Deepfake', 'Diffusion', or 'Spoofing' classes")
-    print("• Organika: Specialized in SDXL/DALL-E/Midjourney detection (98% acc)")
-    print("• SigLIP: General AI-generated image detection (vision-language model)")
-    print("\n➡️  If ANY model detects fake with high confidence, investigate!")
+    print("• FSFM-3C:    Face manipulation, spoofing, morphing attacks")
+    print("• Organika:   AI-generated full images (SDXL, DALL-E, Midjourney)")
+    print("• SigLIP:     General AI-generated content (vision-language model)")
+    print("• Forensics:  Mathematical analysis (FFT, landmarks, symmetry)")
+    print("\n➡  If ANY model detects fake with high confidence, investigate!")
     print("="*70 + "\n")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Ensemble Deepfake Detection - Individual Model Dashboard'
+        description='Ensemble Deepfake Detection - 4-Model Dashboard'
     )
 
     # Input
@@ -313,6 +348,10 @@ def main():
                         default='prithivMLmods/open-deepfake-detection',
                         help='SigLIP model name or path')
 
+    # Face Forensics config
+    parser.add_argument('--predictor_path', type=str, default=None,
+                        help='Path to dlib shape_predictor_68_face_landmarks.dat')
+
     # Device config
     parser.add_argument('--device', type=str, default='cpu',
                         choices=['cuda', 'cpu'],
@@ -334,6 +373,10 @@ def main():
         siglip_config={
             'model_name': args.siglip_model,
             'device': args.device
+        },
+        forensics_config={
+            'predictor_path': args.predictor_path,
+            'device': args.device
         }
     )
 
@@ -347,13 +390,14 @@ def main():
 if __name__ == "__main__":
     if len(sys.argv) == 1:
         print("\n" + "="*70)
-        print("ENSEMBLE DEEPFAKE DETECTOR - INDIVIDUAL MODEL DASHBOARD")
+        print("ENSEMBLE DEEPFAKE DETECTOR - 4-MODEL DASHBOARD")
         print("="*70)
         print("\nShows each model's prediction separately (no voting/aggregation)")
         print("\nModels:")
-        print("  1. FSFM-3C  - Best for: Face deepfakes, spoofing")
-        print("  2. Organika - Best for: AI-generated images (SDXL, DALL-E)")
-        print("  3. SigLIP   - Best for: General AI-generated detection")
+        print("  1. FSFM-3C    - Best for: Face deepfakes, spoofing")
+        print("  2. Organika   - Best for: AI-generated images (SDXL, DALL-E)")
+        print("  3. SigLIP     - Best for: General AI-generated detection")
+        print("  4. Forensics  - Best for: Mathematical face analysis")
         print("\nUsage:")
         print("  python ensemble_detector.py --image <path_to_image>")
         print("\n" + "="*70)
