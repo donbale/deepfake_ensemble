@@ -1,0 +1,24 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+.DS_Store
+
+# Data directories (not needed in container)
+data-*
+evaluation/
+
+# Test images
+detectors/*.jpeg
+detectors/*.png
+
+# Scripts (not needed for API)
+scripts/
+
+# Documentation
+README.md
+*.md
+
+# IDE
+.vscode/
+.idea/

@@ -1,0 +1,42 @@
+services:
+  deepfake-api:
+    build: .
+    container_name: deepfake-ensemble
+    ports:
+      - "8080:8080"
+    volumes:
+      # Persist models between rebuilds
+      - model-store:/models
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DEVICE=cpu
+      - PORT=8080
+
+      # Model paths (first run downloads, then switch to local-only)
+      # - HF_LOCAL_ONLY=true
+      - ORGANIKA_MODEL=Organika/sdxl-detector
+      - SIGLIP_MODEL=prithivMLmods/open-deepfake-detection
+      # - FSFM_MODEL_PATH=/models/fsfm-3c
+      # - PREDICTOR_PATH=/models/dlib/shape_predictor_68_face_landmarks.dat
+
+      # Ensemble weights (fsfm,organika,siglip,forensics)
+      - DETECTOR_WEIGHTS=0.054,0.276,0.621,0.049
+
+      # Thresholds
+      - FAKE_THRESHOLD=0.5
+      - UNCERTAIN_ENABLED=true
+      - UNCERTAIN_LOW=0.40
+      - UNCERTAIN_HIGH=0.60
+
+      # Runtime
+      - LOG_LEVEL=INFO
+      - UVICORN_LOG_LEVEL=info
+      - REQUEST_TIMEOUT_SECONDS=180
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+
+volumes:
+  model-store:

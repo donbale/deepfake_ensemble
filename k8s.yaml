@@ -1,0 +1,152 @@
+# ============================================================
+# Deepfake Ensemble API - Kubernetes Deployment
+# ============================================================
+# Pre-requisite: populate the PVC with models first:
+#   kubectl exec -it <pod> -- python scripts/download_models.py --output /models
+#   OR run download_models.py locally and copy to the PVC
+# ============================================================
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: deepfake-ensemble-model-pvc
+  namespace: data-science
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deepfake-ensemble-api
+  namespace: data-science
+  labels:
+    app: deepfake-ensemble-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: deepfake-ensemble-api
+  template:
+    metadata:
+      labels:
+        app: deepfake-ensemble-api
+        role: api
+    spec:
+      imagePullSecrets:
+        - name: ecr-creds
+
+      volumes:
+        - name: model-store
+          persistentVolumeClaim:
+            claimName: deepfake-ensemble-model-pvc
+
+      containers:
+        - name: deepfake-ensemble-api
+          image: 816069137203.dkr.ecr.us-east-1.amazonaws.com/deepfake-ensemble-api:latest
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 8080
+              name: http
+
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+
+            # ---- Local-only mode (no HF downloads at runtime) ----
+            - name: HF_LOCAL_ONLY
+              value: "true"
+
+            # ---- Model paths (all from PVC) ----
+            - name: FSFM_MODEL_PATH
+              value: "/models/fsfm-3c"
+            - name: ORGANIKA_MODEL
+              value: "/models/organika-sdxl-detector"
+            - name: SIGLIP_MODEL
+              value: "/models/siglip-deepfake-detection"
+            - name: PREDICTOR_PATH
+              value: "/models/dlib/shape_predictor_68_face_landmarks.dat"
+
+            # ---- Device ----
+            - name: DEVICE
+              value: "cuda"
+
+            # ---- Ensemble weights (fsfm,organika,siglip,forensics) ----
+            - name: DETECTOR_WEIGHTS
+              value: "0.054,0.276,0.621,0.049"
+
+            # ---- Thresholds ----
+            - name: FAKE_THRESHOLD
+              value: "0.5"
+
+            # ---- Confidence cap ----
+            - name: CONF_CAP_ENABLED
+              value: "true"
+            - name: CONF_CAP
+              value: "0.90"
+
+            # ---- Uncertain band ----
+            - name: UNCERTAIN_ENABLED
+              value: "true"
+            - name: UNCERTAIN_LOW
+              value: "0.40"
+            - name: UNCERTAIN_HIGH
+              value: "0.60"
+
+            # ---- Runtime ----
+            - name: REQUEST_TIMEOUT_SECONDS
+              value: "180"
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: UVICORN_LOG_LEVEL
+              value: "info"
+
+          volumeMounts:
+            - name: model-store
+              mountPath: /models
+              readOnly: false
+
+          resources:
+            requests:
+              nvidia.com/gpu: "1"
+            limits:
+              nvidia.com/gpu: "1"
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 5
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deepfake-ensemble-api
+  namespace: data-science
+  labels:
+    app: deepfake-ensemble-api
+spec:
+  type: NodePort
+  selector:
+    app: deepfake-ensemble-api
+    role: api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

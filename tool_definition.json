@@ -1,0 +1,66 @@
+{
+  "name": "analyze_image_for_deepfake",
+  "description": "Analyze an image for deepfake manipulation using a 4-model ensemble. Returns a verdict (FAKE/REAL), confidence score, natural language reasoning, and per-model breakdowns. Models: FSFM-3C (face manipulation), Organika (AI-generated images), SigLIP (general AI detection), Face Forensics (mathematical analysis including FFT frequency, landmark consistency, symmetry, texture, and edge artifacts).",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "image_url": {
+        "type": "string",
+        "description": "URL of the image to analyze. The agent should download this and POST it to the API."
+      }
+    },
+    "required": ["image_url"]
+  },
+  "api": {
+    "method": "POST",
+    "url": "http://deepfake-ensemble:9000/analyze",
+    "content_type": "multipart/form-data",
+    "file_field": "file",
+    "note": "Download the image from image_url, then POST it as multipart/form-data with field name 'file'"
+  },
+  "response_schema": {
+    "type": "object",
+    "properties": {
+      "verdict": {
+        "type": "string",
+        "enum": ["FAKE", "REAL"],
+        "description": "Final ensemble verdict"
+      },
+      "confidence": {
+        "type": "number",
+        "description": "Confidence in the verdict (0-1)"
+      },
+      "fake_probability": {
+        "type": "number",
+        "description": "Weighted probability of being fake (0-1)"
+      },
+      "reasoning": {
+        "type": "string",
+        "description": "Natural language explanation - relay this directly to the user"
+      },
+      "models_agreeing_fake": {
+        "type": "integer",
+        "description": "Number of models that detected fake (0-4)"
+      },
+      "detected_by": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Names of models that flagged the image as fake"
+      },
+      "analysis_time_ms": {
+        "type": "number",
+        "description": "Analysis time in milliseconds"
+      }
+    }
+  },
+  "usage_examples": [
+    {
+      "scenario": "User asks 'Is this photo real?'",
+      "agent_action": "Download the image, POST to /analyze, then relay the 'reasoning' field to the user along with the verdict and confidence."
+    },
+    {
+      "scenario": "User asks 'What kind of deepfake is this?'",
+      "agent_action": "Check the 'detected_by' array and 'model_details' to identify which manipulation type was detected. FSFM-3C detects face swaps, Organika detects AI-generated images, Forensics detects mathematical artifacts."
+    }
+  ]
+}

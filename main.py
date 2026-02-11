@@ -1,483 +1,411 @@
 #!/usr/bin/env python3
 """
-Minimal FastAPI Server for Ensemble Deepfake Detection
-Loads models once on startup, keeps in memory for fast predictions
+Deepfake Ensemble API - 4-Model Detection Server
+Designed for Kubernetes deployment with PVC-mounted models.
+
+Models:
+  1. FSFM-3C    (ViT)              → Face manipulation, spoofing
+  2. Organika   (Swin Transformer) → AI-generated images (SDXL, DALL-E)
+  3. SigLIP     (Vision-Language)   → General AI-generated detection
+  4. Forensics  (Signal Processing) → FFT, landmarks, symmetry, texture, edges
+
+All configuration via environment variables.
 """
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 from typing import Optional, Dict, List
 import uvicorn
 from PIL import Image
 import io
 import os
-
-# Import detectors
-from detectors.ensemble_detector import EnsembleDeepfakeDetector
-from detectors.fsfm_unified_detector import FSFM_UnifiedDetector
-from detectors.cemroot_detector import CemRootDetector
-from detectors.vit_detector import DeepFakeDetectorV2
-from detectors.preprocessing import DeepfakePreprocessor, FFTAnalyzer, LandmarkAnalyzer
-
+import sys
+import time
+import json
+import logging
 
 # ============================================================================
-# CONFIGURATION - CHANGE PATHS HERE
-# NOTE: Update these paths for your machine (Linux vs Windows)
+# ENV CONFIGURATION
 # ============================================================================
 
-# FSFM - auto-downloads from HuggingFace if local files don't exist
-FSFM_CHECKPOINT = None  # Auto-download from Wolowolo/fsfm-3c
-FSFM_MEAN_STD = None    # Auto-download from Wolowolo/fsfm-3c
+# ---- Model paths (local PVC paths or HuggingFace repo IDs) ----
+FSFM_MODEL_PATH = os.environ.get("FSFM_MODEL_PATH", None)           # e.g. /models/fsfm-3c
+FSFM_CHECKPOINT = os.environ.get("FSFM_CHECKPOINT", None)            # Override: direct .pth path
+FSFM_MEAN_STD = os.environ.get("FSFM_MEAN_STD", None)                # Override: direct mean_std path
+ORGANIKA_MODEL = os.environ.get("ORGANIKA_MODEL", "Organika/sdxl-detector")
+SIGLIP_MODEL = os.environ.get("SIGLIP_MODEL", "prithivMLmods/open-deepfake-detection")
+PREDICTOR_PATH = os.environ.get("PREDICTOR_PATH", None)               # dlib shape predictor .dat
 
-# Dima806 Model - ViT fine-tuned on deepfakes (replaces CemRoot)
-DIMA806_MODEL = "dima806/deepfake_vs_real_image_detection"  # HuggingFace repo ID
+# ---- Offline / local-only mode ----
+HF_LOCAL_ONLY = os.environ.get("HF_LOCAL_ONLY", "false").lower() in ("true", "1", "yes")
+if HF_LOCAL_ONLY:
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
-# ViT Model - can be HuggingFace name OR local path
-# VIT_MODEL = "prithivMLmods/Deep-Fake-Detector-v2-Model"  # Original
-VIT_MODEL = "jacoballessio/ai-image-detect-distilled"  # Downloads from HuggingFace
-VIT_CACHE = "./models/vit-cache"
+# ---- Device ----
+DEVICE = os.environ.get("DEVICE", "cpu")
 
-DEVICE = "cpu"  # Change to "cuda" or "mps" for GPU
+# ---- Ensemble weights (comma-separated: fsfm,organika,siglip,forensics) ----
+DETECTOR_WEIGHTS_STR = os.environ.get("DETECTOR_WEIGHTS", "0.054,0.276,0.621,0.049")
+DETECTOR_WEIGHTS = {}
+try:
+    parts = [float(x.strip()) for x in DETECTOR_WEIGHTS_STR.split(",")]
+    if len(parts) == 4:
+        DETECTOR_WEIGHTS = {
+            'fsfm': parts[0],
+            'organika': parts[1],
+            'siglip': parts[2],
+            'forensics': parts[3],
+        }
+    elif len(parts) == 3:
+        # Backward compat: 3-model weights, forensics gets 0
+        DETECTOR_WEIGHTS = {
+            'fsfm': parts[0],
+            'organika': parts[1],
+            'siglip': parts[2],
+            'forensics': 0.0,
+        }
+except (ValueError, IndexError):
+    DETECTOR_WEIGHTS = {'fsfm': 0.25, 'organika': 0.25, 'siglip': 0.25, 'forensics': 0.25}
 
-# THRESHOLD CONFIGURATION - CHANGE THIS TO ADJUST SENSITIVITY
-FAKE_CONFIDENCE_THRESHOLD = 0.60  # 60% threshold for detecting fake
-# Lower = more sensitive (catches more fakes, more false positives)
-# Higher = less sensitive (misses some fakes, fewer false positives)
+# ---- Thresholds ----
+FAKE_THRESHOLD = float(os.environ.get("FAKE_THRESHOLD", "0.5"))
 
-# WEIGHTS FILE - Path to optimized ensemble weights
-WEIGHTS_FILE = "./optimal_weights.json"
+# ---- Confidence capping ----
+CONF_CAP_ENABLED = os.environ.get("CONF_CAP_ENABLED", "false").lower() in ("true", "1", "yes")
+CONF_CAP = float(os.environ.get("CONF_CAP", "0.90"))
 
+# ---- Uncertain band ----
+UNCERTAIN_ENABLED = os.environ.get("UNCERTAIN_ENABLED", "true").lower() in ("true", "1", "yes")
+UNCERTAIN_LOW = float(os.environ.get("UNCERTAIN_LOW", "0.40"))
+UNCERTAIN_HIGH = float(os.environ.get("UNCERTAIN_HIGH", "0.60"))
+
+# ---- Server ----
+PORT = int(os.environ.get("PORT", "8080"))
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+UVICORN_LOG_LEVEL = os.environ.get("UVICORN_LOG_LEVEL", "info").lower()
+
+# ---- HuggingFace cache (for non-local mode) ----
+HF_HOME = os.environ.get("HF_HOME", "/models/hf-cache")
+os.environ["HF_HOME"] = HF_HOME
+os.environ["TRANSFORMERS_CACHE"] = HF_HOME
+
+# ---- Timeouts ----
+REQUEST_TIMEOUT_SECONDS = int(os.environ.get("REQUEST_TIMEOUT_SECONDS", "180"))
+
+# Configure logging
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("deepfake-api")
+
+# ============================================================================
+# Response Models
 # ============================================================================
 
 
-# Response models
-class ModelPrediction(BaseModel):
-    name: str
-    prediction: str
-    confidence: float
-    is_fake: bool
-    specialty: str
-    all_probabilities: Optional[Dict[str, float]] = None
+class ForensicsSubScores(BaseModel):
+    """Mathematical analysis sub-scores from the Face Forensics analyzer."""
+    frequency: Optional[float] = Field(None, description="DCT + azimuthal FFT frequency anomaly (0-1)")
+    landmark: Optional[float] = Field(None, description="Facial landmark proportion anomaly (0-1)")
+    symmetry: Optional[float] = Field(None, description="Aligned bilateral symmetry anomaly in LAB (0-1)")
+    texture: Optional[float] = Field(None, description="LBP + local variance texture anomaly (0-1)")
+    edge: Optional[float] = Field(None, description="Edge/blending artifact anomaly (0-1)")
+    noise: Optional[float] = Field(None, description="Sensor noise residual consistency anomaly (0-1)")
+    color: Optional[float] = Field(None, description="Color/illumination consistency anomaly (0-1)")
 
 
-class EnsemblePrediction(BaseModel):
-    summary: Dict
-    models: Dict[str, ModelPrediction]
-    threshold_used: float
+class ModelResult(BaseModel):
+    name: str = Field(..., description="Model name")
+    prediction: str = Field(..., description="'Fake' or 'Real'")
+    confidence: float = Field(..., description="Confidence (0-1)")
+    is_fake: bool = Field(..., description="Model's fake verdict")
+    fake_probability: Optional[float] = Field(None, description="Fake probability (0-1)")
+    specialty: str = Field(..., description="Model specialty")
+    sub_scores: Optional[ForensicsSubScores] = Field(None, description="Forensics sub-scores")
+
+
+class AnalysisResponse(BaseModel):
+    verdict: str = Field(..., description="FAKE, REAL, or UNCERTAIN")
+    confidence: float = Field(..., description="Ensemble confidence (0-1)")
+    fake_probability: float = Field(..., description="Weighted fake probability (0-1)")
+    reasoning: str = Field(..., description="Natural language explanation for LLM relay")
+    models_agreeing_fake: int = Field(..., description="Models detecting fake (0-4)")
+    total_models: int = Field(4, description="Total models")
+    detected_by: List[str] = Field(..., description="Models that flagged fake")
+    weights_used: Dict[str, float] = Field(..., description="Ensemble weights applied")
+    model_details: Dict[str, ModelResult] = Field(..., description="Per-model breakdown")
+    analysis_time_ms: float = Field(..., description="Analysis time in ms")
 
 
 class HealthResponse(BaseModel):
     status: str
     models_loaded: bool
+    model_count: int
+    device: str
+    models: List[str]
+    weights: Dict[str, float]
     threshold: float
 
 
-# Initialize FastAPI
+# ============================================================================
+# FastAPI App
+# ============================================================================
+
 app = FastAPI(
-    title="Ensemble Deepfake Detector API",
-    description="Multi-model deepfake detection with individual outputs",
-    version="1.0.0"
+    title="Deepfake Ensemble Detector",
+    description=(
+        "4-model ensemble deepfake detection API. "
+        "Upload an image to POST /analyze for a weighted verdict with reasoning. "
+        "Models: FSFM-3C, Organika, SigLIP, Face Forensics."
+    ),
+    version="2.0.0",
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# Global detector (loaded once on startup)
 ensemble = None
 
 
 @app.on_event("startup")
 async def load_models():
-    """Load all models once on server startup"""
+    """Load all 4 models on startup."""
     global ensemble
-    
-    print("\n" + "="*70)
-    print("🚀 LOADING ENSEMBLE MODELS (ONE TIME)")
-    print("="*70)
-    
+
+    from detectors.ensemble_detector import EnsembleDeepfakeDetector
+
+    logger.info("=" * 70)
+    logger.info("LOADING 4-MODEL ENSEMBLE")
+    logger.info("=" * 70)
+    logger.info(f"Device: {DEVICE}")
+    logger.info(f"HF_LOCAL_ONLY: {HF_LOCAL_ONLY}")
+    logger.info(f"Weights: {DETECTOR_WEIGHTS}")
+    logger.info(f"Threshold: {FAKE_THRESHOLD}")
+    logger.info(f"FSFM path: {FSFM_MODEL_PATH or FSFM_CHECKPOINT or 'auto-download'}")
+    logger.info(f"Organika: {ORGANIKA_MODEL}")
+    logger.info(f"SigLIP: {SIGLIP_MODEL}")
+    logger.info(f"Predictor: {PREDICTOR_PATH or 'auto-download'}")
+
     try:
+        # FSFM config: support both direct paths and model directory
+        fsfm_checkpoint = FSFM_CHECKPOINT
+        fsfm_mean_std = FSFM_MEAN_STD
+
+        if FSFM_MODEL_PATH and os.path.isdir(FSFM_MODEL_PATH):
+            # Auto-detect checkpoint and mean_std in model directory
+            for f in os.listdir(FSFM_MODEL_PATH):
+                if f.endswith('.pth') and 'checkpoint' in f.lower():
+                    fsfm_checkpoint = os.path.join(FSFM_MODEL_PATH, f)
+                elif f.endswith('.pth') and fsfm_checkpoint is None:
+                    fsfm_checkpoint = os.path.join(FSFM_MODEL_PATH, f)
+                elif 'mean_std' in f.lower():
+                    fsfm_mean_std = os.path.join(FSFM_MODEL_PATH, f)
+            logger.info(f"FSFM auto-detected: checkpoint={fsfm_checkpoint}, mean_std={fsfm_mean_std}")
+
         ensemble = EnsembleDeepfakeDetector(
             fsfm_config={
-                'checkpoint': FSFM_CHECKPOINT,
-                'mean_std': FSFM_MEAN_STD,
-                'device': DEVICE
+                'checkpoint': fsfm_checkpoint,
+                'mean_std': fsfm_mean_std,
+                'device': DEVICE,
             },
-            cemroot_config={
-                'model_path': CEMROOT_MODEL,
-                'image_size': 128
+            organika_config={
+                'model_name': ORGANIKA_MODEL,
+                'device': DEVICE,
             },
-            vit_config={
-                'model_name': VIT_MODEL,
-                'cache_dir': VIT_CACHE,
-                'device': DEVICE
-            }
+            siglip_config={
+                'model_name': SIGLIP_MODEL,
+                'device': DEVICE,
+            },
+            forensics_config={
+                'predictor_path': PREDICTOR_PATH,
+                'device': DEVICE,
+            },
         )
-        
-        print("\n" + "="*70)
-        print("✅ ALL MODELS LOADED - SERVER READY")
-        print(f"🎯 Fake detection threshold: {FAKE_CONFIDENCE_THRESHOLD*100}%")
-        print("="*70 + "\n")
-        
+
+        logger.info("=" * 70)
+        logger.info("ALL 4 MODELS LOADED - SERVER READY")
+        logger.info("=" * 70)
+
     except Exception as e:
-        print(f"\n❌ ERROR LOADING MODELS: {e}")
-        print("Server will start but predictions will fail")
-        print("="*70 + "\n")
+        logger.error(f"ERROR LOADING MODELS: {e}", exc_info=True)
+        logger.error("Server will start but /analyze will return 503")
 
 
-@app.get("/", response_model=Dict)
-async def root():
-    """Root endpoint - API information"""
-    return {
-        "service": "Ensemble Deepfake Detector API",
-        "version": "1.0.0",
-        "models": ["FSFM-3C", "CemRoot", "ViT-v2"],
-        "endpoints": {
-            "POST /predict": "Upload image for ensemble detection",
-            "POST /predict/weighted": "Weighted ensemble (uses optimized weights)",
-            "POST /predict/fsfm": "FSFM-3C only (4-class)",
-            "POST /predict/cemroot": "CemRoot only",
-            "POST /predict/vit": "ViT-v2 only",
-            "POST /analyze/spectrum": "FFT frequency analysis",
-            "POST /analyze/landmarks": "Facial landmark analysis",
-            "POST /analyze/full": "Full preprocessing analysis",
-            "GET /health": "Health check"
-        },
-        "threshold": FAKE_CONFIDENCE_THRESHOLD,
-        "weights_file": WEIGHTS_FILE
-    }
+# ============================================================================
+# Endpoints
+# ============================================================================
 
 
-@app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy" if ensemble is not None else "models_not_loaded",
-        "models_loaded": ensemble is not None,
-        "threshold": FAKE_CONFIDENCE_THRESHOLD
-    }
+@app.get("/health", response_model=HealthResponse, tags=["System"])
+async def health():
+    """Health check — returns model status, weights, and threshold."""
+    return HealthResponse(
+        status="healthy" if ensemble else "models_not_loaded",
+        models_loaded=ensemble is not None,
+        model_count=4 if ensemble else 0,
+        device=DEVICE,
+        models=["FSFM-3C", "Organika", "SigLIP", "Face Forensics"] if ensemble else [],
+        weights=DETECTOR_WEIGHTS,
+        threshold=FAKE_THRESHOLD,
+    )
 
 
-def apply_threshold(model_result: Dict, threshold: float) -> Dict:
+@app.post("/analyze", response_model=AnalysisResponse, tags=["Analysis"])
+async def analyze_image(
+    file: UploadFile = File(..., description="Image file (JPEG, PNG, WebP)")
+):
     """
-    Apply confidence threshold to model prediction
-    
-    Args:
-        model_result: Raw model output
-        threshold: Minimum confidence to consider prediction valid
-        
-    Returns:
-        Updated result with threshold applied
-    """
-    confidence = model_result['confidence']
-    is_fake = model_result['is_fake']
-    
-    # Only trust prediction if confidence meets threshold
-    if confidence < threshold:
-        # Low confidence - mark as uncertain
-        model_result['prediction'] = f"{model_result['prediction']} (LOW CONFIDENCE)"
-        model_result['threshold_met'] = False
-    else:
-        model_result['threshold_met'] = True
-    
-    return model_result
+    Analyze an image for deepfake manipulation.
 
+    Returns verdict (FAKE/REAL/UNCERTAIN), confidence, natural language reasoning,
+    and per-model breakdowns including forensic sub-scores.
 
-@app.post("/predict", response_model=EnsemblePrediction)
-async def predict_ensemble(file: UploadFile = File(...)):
-    """
-    Ensemble prediction - all 3 models
-    
-    Shows individual outputs + summary with threshold applied
+    The `reasoning` field is designed for direct relay to end users by an LLM agent.
     """
     if ensemble is None:
-        raise HTTPException(status_code=503, detail="Models not loaded")
-    
+        raise HTTPException(status_code=503, detail="Models not loaded. Server still starting up.")
+
+    if file.content_type and not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail=f"Expected image, got {file.content_type}")
+
     try:
-        # Read uploaded image
         contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
-        
-        # Get predictions from all models
-        result = ensemble.predict(image, cemroot_method='training_match')
-        
-        # Apply threshold to each model
-        high_confidence_detections = []
-        for model_name, model_data in result['models'].items():
-            model_data = apply_threshold(model_data, FAKE_CONFIDENCE_THRESHOLD)
-            
-            # Track high-confidence fake detections
-            if (model_data['is_fake'] and 
-                model_data.get('threshold_met', False)):
-                high_confidence_detections.append(model_name.upper())
-        
-        # Update summary with threshold info
-        result['summary']['high_confidence_detections'] = high_confidence_detections
-        result['summary']['threshold_applied'] = FAKE_CONFIDENCE_THRESHOLD
-        
-        # Convert to response model
-        models_output = {}
-        for key, data in result['models'].items():
-            models_output[key] = ModelPrediction(
-                name=data['name'],
-                prediction=data['prediction'],
-                confidence=data['confidence'],
-                is_fake=data['is_fake'],
-                specialty=data['specialty'],
-                all_probabilities=data.get('all_probabilities', {})
-            )
-        
-        return EnsemblePrediction(
-            summary=result['summary'],
-            models=models_output,
-            threshold_used=FAKE_CONFIDENCE_THRESHOLD
-        )
-        
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
     except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read image: {str(e)}")
+
+    start = time.time()
+
+    try:
+        result = ensemble.predict_weighted(image, weights=DETECTOR_WEIGHTS)
+    except Exception as e:
+        logger.error(f"Prediction failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
 
+    elapsed_ms = (time.time() - start) * 1000
 
-@app.post("/predict/fsfm")
-async def predict_fsfm(file: UploadFile = File(...)):
-    """FSFM-3C only prediction (4-class)"""
-    if ensemble is None:
-        raise HTTPException(status_code=503, detail="Models not loaded")
-    
-    try:
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
-        
-        result = ensemble.fsfm.predict(image, return_all_probs=True)
-        
-        return JSONResponse(content={
-            "model": "FSFM-3C",
-            "prediction": result['predicted_label'],
-            "confidence": result['confidence'],
-            "all_probabilities": result.get('all_probabilities', {}),
-            "threshold_met": result['confidence'] >= FAKE_CONFIDENCE_THRESHOLD
-        })
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # Extract weighted score
+    weighted = result.get('weighted_voting', {})
+    weighted_score = weighted.get('weighted_score', 0.5)
 
+    # Apply confidence cap
+    if CONF_CAP_ENABLED:
+        weighted_score = min(weighted_score, CONF_CAP) if weighted_score > 0.5 else max(weighted_score, 1 - CONF_CAP)
 
-@app.post("/predict/cemroot")
-async def predict_cemroot(file: UploadFile = File(...)):
-    """CemRoot only prediction"""
-    if ensemble is None:
-        raise HTTPException(status_code=503, detail="Models not loaded")
-    
-    try:
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
-        
-        result = ensemble.cemroot.predict(
-            image, 
-            method='training_match', 
-            return_all_probs=True
+    # Determine verdict
+    if UNCERTAIN_ENABLED and UNCERTAIN_LOW <= weighted_score <= UNCERTAIN_HIGH:
+        verdict = "UNCERTAIN"
+    elif weighted_score >= FAKE_THRESHOLD:
+        verdict = "FAKE"
+    else:
+        verdict = "REAL"
+
+    is_fake = verdict == "FAKE"
+
+    # Build per-model details
+    model_details = {}
+    for key, data in result['models'].items():
+        sub_scores = None
+        if key == 'forensics' and 'sub_scores' in data:
+            sub_scores = ForensicsSubScores(**data['sub_scores'])
+
+        model_details[key] = ModelResult(
+            name=data['name'],
+            prediction=data['prediction'],
+            confidence=data['confidence'],
+            is_fake=data['is_fake'],
+            fake_probability=data.get('fake_probability'),
+            specialty=data['specialty'],
+            sub_scores=sub_scores,
         )
-        
-        return JSONResponse(content={
-            "model": "CemRoot",
-            "prediction": result['predicted_label'],
-            "confidence": result['confidence'],
-            "all_probabilities": result.get('all_probabilities', {}),
-            "threshold_met": result['confidence'] >= FAKE_CONFIDENCE_THRESHOLD
-        })
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    reasoning = _build_reasoning(result, weighted_score, verdict, elapsed_ms)
+
+    return AnalysisResponse(
+        verdict=verdict,
+        confidence=round(abs(weighted_score - 0.5) * 2, 4),
+        fake_probability=round(weighted_score, 4),
+        reasoning=reasoning,
+        models_agreeing_fake=result['summary']['models_detecting_fake'],
+        total_models=4,
+        detected_by=result['summary']['detected_by'],
+        weights_used=DETECTOR_WEIGHTS,
+        model_details=model_details,
+        analysis_time_ms=round(elapsed_ms, 1),
+    )
 
 
-@app.post("/predict/vit")
-async def predict_vit(file: UploadFile = File(...)):
-    """ViT-v2 only prediction"""
-    if ensemble is None:
-        raise HTTPException(status_code=503, detail="Models not loaded")
-    
-    try:
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
-        
-        result = ensemble.vit.predict(image, return_all_probs=True)
-        
-        return JSONResponse(content={
-            "model": "ViT-v2",
-            "prediction": result['predicted_label'],
-            "confidence": result['confidence'],
-            "all_probabilities": result.get('all_probabilities', {}),
-            "threshold_met": result['confidence'] >= FAKE_CONFIDENCE_THRESHOLD
-        })
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def _build_reasoning(result, weighted_score, verdict, elapsed_ms):
+    """Build natural language reasoning for LLM agents."""
+    models = result['models']
+    fake_count = result['summary']['models_detecting_fake']
+    detected_by = result['summary']['detected_by']
+
+    if fake_count == 0:
+        verdict_text = "All 4 models agree this image appears authentic."
+    elif fake_count == 4:
+        verdict_text = "All 4 models unanimously detected this image as fake."
+    elif fake_count >= 3:
+        verdict_text = f"Strong evidence of manipulation: {fake_count}/4 models flagged fake ({', '.join(detected_by)})."
+    elif fake_count == 2:
+        verdict_text = f"Mixed signals: 2/4 models flagged fake ({', '.join(detected_by)})."
+    else:
+        verdict_text = f"Weak signal: only {detected_by[0]} flagged this image."
+
+    if verdict == "UNCERTAIN":
+        verdict_text += " The weighted score falls in the uncertain range — manual review recommended."
+
+    conf_text = f"Weighted score: {weighted_score:.1%} fake probability."
+
+    highlights = []
+    for key, data in models.items():
+        name = data['name']
+        fp = data.get('fake_probability')
+        if data['is_fake']:
+            prob = f"{fp:.0%}" if fp is not None else f"{data['confidence']:.0%}"
+            highlights.append(f"• {name}: FAKE ({prob})")
+        else:
+            highlights.append(f"• {name}: REAL ({data['confidence']:.0%} confidence)")
+
+    # Forensics flags
+    forensics = models.get('forensics', {})
+    sub_scores = forensics.get('sub_scores', {})
+    if sub_scores:
+        high = [(k, v) for k, v in sub_scores.items() if v > 0.6]
+        if high:
+            highlights.append(f"• Forensic flags: {', '.join(f'{k} ({v:.0%})' for k, v in high)}")
+
+    return f"{verdict_text} {conf_text}\n\n" + "\n".join(highlights)
 
 
 # ============================================================================
-# NEW ENDPOINTS: Weighted Prediction & Preprocessing Analysis
+# Main
 # ============================================================================
-
-@app.post("/predict/weighted")
-async def predict_weighted(file: UploadFile = File(...)):
-    """
-    Weighted ensemble prediction using optimized weights
-    
-    Uses weights from optimal_weights.json if available,
-    otherwise defaults to equal weights.
-    """
-    if ensemble is None:
-        raise HTTPException(status_code=503, detail="Models not loaded")
-    
-    try:
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
-        
-        result = ensemble.predict_weighted(
-            image, 
-            weights_file=WEIGHTS_FILE,
-            cemroot_method='training_match'
-        )
-        
-        # Format response
-        weighted_info = result.get('weighted_voting', {})
-        
-        return JSONResponse(content={
-            "ensemble_prediction": "FAKE" if weighted_info.get('is_fake') else "REAL",
-            "weighted_score": weighted_info.get('weighted_score', 0.5),
-            "confidence": weighted_info.get('confidence', 0),
-            "interpretation": weighted_info.get('interpretation', ''),
-            "weights_used": weighted_info.get('weights_used', {}),
-            "individual_models": {
-                name: {
-                    "prediction": data['prediction'],
-                    "confidence": data['confidence'],
-                    "is_fake": data['is_fake']
-                }
-                for name, data in result['models'].items()
-            }
-        })
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Weighted prediction failed: {str(e)}")
-
-
-@app.post("/analyze/spectrum")
-async def analyze_spectrum(file: UploadFile = File(...)):
-    """
-    FFT (Frequency Domain) analysis
-    
-    Detects unnatural frequency patterns that may indicate
-    AI generation or manipulation artifacts.
-    """
-    try:
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
-        
-        analyzer = FFTAnalyzer()
-        result = analyzer.analyze(image)
-        
-        # Remove large magnitude spectrum from response (too big for API)
-        response = {
-            "anomaly_score": result['anomaly_score'],
-            "high_freq_ratio": result['high_freq_ratio'],
-            "interpretation": result['interpretation'],
-            "radial_profile_summary": {
-                "low_freq_energy": float(sum(result['radial_profile'][:10])),
-                "high_freq_energy": float(sum(result['radial_profile'][-10:])),
-            }
-        }
-        
-        return JSONResponse(content=response)
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"FFT analysis failed: {str(e)}")
-
-
-@app.post("/analyze/landmarks")
-async def analyze_landmarks(file: UploadFile = File(...)):
-    """
-    Facial landmark consistency analysis
-    
-    Checks facial proportions and symmetry against
-    expected human geometry.
-    """
-    try:
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
-        
-        analyzer = LandmarkAnalyzer()
-        result = analyzer.analyze(image)
-        
-        # Remove raw landmarks from response (too large)
-        response = {
-            "consistency_score": result.get('consistency_score', 0.5),
-            "symmetry_score": result.get('symmetry_score', 0.5),
-            "proportion_scores": result.get('proportion_scores', {}),
-            "issues": result.get('issues', []),
-            "interpretation": result.get('interpretation', ''),
-            "error": result.get('error')
-        }
-        
-        return JSONResponse(content=response)
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Landmark analysis failed: {str(e)}")
-
-
-@app.post("/analyze/full")
-async def analyze_full(file: UploadFile = File(...)):
-    """
-    Full preprocessing analysis
-    
-    Combines FFT and landmark analysis for comprehensive
-    deepfake detection preprocessing.
-    """
-    try:
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
-        
-        preprocessor = DeepfakePreprocessor()
-        result = preprocessor.analyze(image)
-        
-        # Summarize for API response
-        response = {
-            "combined_suspicion_score": result['combined_suspicion_score'],
-            "interpretation": result['interpretation'],
-            "recommendation": result['recommendation'],
-            "fft_analysis": {
-                "anomaly_score": result['fft_analysis']['anomaly_score'],
-                "high_freq_ratio": result['fft_analysis']['high_freq_ratio'],
-                "interpretation": result['fft_analysis']['interpretation']
-            },
-            "landmark_analysis": {
-                "consistency_score": result['landmark_analysis'].get('consistency_score', 0.5),
-                "symmetry_score": result['landmark_analysis'].get('symmetry_score', 0.5),
-                "issues": result['landmark_analysis'].get('issues', []),
-                "interpretation": result['landmark_analysis'].get('interpretation', '')
-            }
-        }
-        
-        return JSONResponse(content=response)
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Full analysis failed: {str(e)}")
-
 
 if __name__ == "__main__":
-    print("\n" + "="*70)
-    print("🚀 STARTING ENSEMBLE DEEPFAKE DETECTOR SERVER")
-    print("="*70)
-    print("\n📋 Configuration:")
-    print(f"  • Device: {DEVICE}")
-    print(f"  • Threshold: {FAKE_CONFIDENCE_THRESHOLD*100}%")
-    print(f"  • FSFM Checkpoint: {FSFM_CHECKPOINT}")
-    print(f"  • CemRoot Model: {CEMROOT_MODEL}")
-    print(f"  • ViT Cache: {VIT_CACHE}")
-    print("\n🌐 Server will start at: http://localhost:9000")
-    print("📚 API docs at: http://localhost:9000/docs")
-    print("="*70 + "\n")
-    
+    logger.info("=" * 70)
+    logger.info("DEEPFAKE ENSEMBLE API SERVER")
+    logger.info("=" * 70)
+    logger.info(f"Port: {PORT}")
+    logger.info(f"Device: {DEVICE}")
+    logger.info(f"HF_LOCAL_ONLY: {HF_LOCAL_ONLY}")
+    logger.info(f"Weights: {DETECTOR_WEIGHTS}")
+    logger.info(f"Threshold: {FAKE_THRESHOLD}")
+    logger.info(f"Uncertain band: {UNCERTAIN_LOW}-{UNCERTAIN_HIGH} (enabled={UNCERTAIN_ENABLED})")
+    logger.info(f"Conf cap: {CONF_CAP} (enabled={CONF_CAP_ENABLED})")
+
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=9000,
-        log_level="info"
+        port=PORT,
+        log_level=UVICORN_LOG_LEVEL,
+        timeout_keep_alive=REQUEST_TIMEOUT_SECONDS,
     )
